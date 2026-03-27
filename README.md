@@ -235,21 +235,23 @@ npm install
     - `[[d1_databases]]` 的 `database_id`
     - `[[r2_buckets]]` 的 `bucket_name/preview_bucket_name`
     - `[vars]` 中限流、配额、公开域名等变量
-4. 配置 Pages Secrets（生产环境）
+4. 配置 Pages Secrets / Variables（生产环境）
     - `TURNSTILE_SECRET_KEY`
     - `R2_ACCESS_KEY_ID`
     - `R2_SECRET_ACCESS_KEY`
     - `CLOUDFLARE_ACCOUNT_ID`
+    - `TURNSTILE_SITE_KEY`（**Pages Variable**，不是 Secret）
 
 ```bash
 wrangler pages secret put TURNSTILE_SECRET_KEY --project-name cyrene-picture-cloudflare
 wrangler pages secret put R2_ACCESS_KEY_ID --project-name cyrene-picture-cloudflare
 wrangler pages secret put R2_SECRET_ACCESS_KEY --project-name cyrene-picture-cloudflare
 wrangler pages secret put CLOUDFLARE_ACCOUNT_ID --project-name cyrene-picture-cloudflare
+# TURNSTILE_SITE_KEY 请在 Pages 项目 Variables 中配置
 ```
 
 5. 配置前端 Turnstile Site Key（生产环境变量）
-    - 在 Pages 项目变量中新增：`TURNSTILE_SITE_KEY="<your-site-key>"`
+    - 在 Pages 项目 Variables 中新增：`TURNSTILE_SITE_KEY="<your-site-key>"`
     - 不需要再修改 `public/*.html`
 
 ## 本地运行
