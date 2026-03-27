@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>昔涟 | 上传图片</title>
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="stylesheet" href="/styles.css" />
+		<script
+			src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+			async
+			defer
+		></script>
+	</head>
+	<body>
+		<header class="site-header">
+			<div class="site-header-inner container">
+				<div class="site-title-wrap">
+					<a class="site-title-link" href="/">
+						<h1 data-site-title>昔涟</h1>
+					</a>
+					<div class="title-stripe"></div>
+				</div>
+				<a class="button-link" href="/">返回</a>
+			</div>
+		</header>
+
+		<main class="container upload-page">
+			<section class="card upload-card">
+				<div class="upload-header">
+					<h2>上传图片</h2>
+					<p>
+						支持 JPEG / PNG / WEBP /
+						AVIF，提交后会自动发布到展示页。
+					</p>
+				</div>
+
+				<div class="upload-form-grid">
+					<label>
+						上传者昵称
+						<input
+							id="uploaderNickname"
+							type="text"
+							maxlength="24"
+							placeholder="输入你的昵称（不填默认为093）"
+						/>
+					</label>
+					<label>
+						选择图片
+						<input
+							id="fileInput"
+							type="file"
+							multiple
+							accept="image/jpeg,image/png,image/webp,image/avif"
+						/>
+					</label>
+				</div>
+
+				<div class="upload-validation-box">
+					<div id="turnstileWidget"></div>
+					<small id="turnstileStatus"></small>
+				</div>
+
+				<button id="uploadButton" class="upload-primary-btn">
+					上传
+				</button>
+				<div id="uploadSummary" class="upload-summary summary-pending">
+					尚未开始上传
+				</div>
+
+				<section class="progress-panel" aria-live="polite">
+					<div class="progress-panel-header">
+						<h3>上传进度</h3>
+						<small id="progressStats">0/0</small>
+					</div>
+					<div id="progressList" class="progress-list"></div>
+				</section>
+			</section>
+		</main>
+
+		<script type="module" src="/upload.js"></script>
+	</body>
+</html>

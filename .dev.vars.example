@@ -1,0 +1,26 @@
+# Local secrets for `wrangler pages dev`
+# Copy to `.dev.vars` and fill in your own values.
+
+# Turnstile (Cloudflare official testing keys)
+# Site Key (frontend): 1x00000000000000000000AA
+# Secret Key (backend): 1x0000000000000000000000000000000AA
+TURNSTILE_SITE_KEY="1x00000000000000000000AA"
+TURNSTILE_SECRET_KEY="1x0000000000000000000000000000000AA"
+
+# Local-only mode: upload via Pages Function + `env.R2` binding (no browser CORS)
+LOCAL_UPLOAD_DIRECT="true"
+DEFAULT_UPLOADER_NICKNAME="093"
+UPLOADER_NICKNAME_MAX_LENGTH="24"
+THUMBNAIL_ENABLED="true"
+THUMBNAIL_WIDTH="360"
+THUMBNAIL_FORMAT="webp"
+THUMBNAIL_QUALITY="80"
+THUMBNAIL_GENERATOR="disabled"
+# For real thumbnail generation (Cloudflare Image Resizing)
+# Example: THUMBNAIL_RESIZE_BASE_URL="https://your-zone.example.com"
+THUMBNAIL_RESIZE_BASE_URL=""
+
+# Optional in local direct mode; required in remote presigned mode
+# CLOUDFLARE_ACCOUNT_ID="your-account-id"
+# R2_ACCESS_KEY_ID="your-r2-access-key-id"
+# R2_SECRET_ACCESS_KEY="your-r2-secret-access-key"

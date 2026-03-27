@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>昔涟 | 图片详情</title>
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="stylesheet" href="/styles.css" />
+	</head>
+	<body>
+		<header class="site-header">
+			<div class="site-header-inner container">
+				<div class="site-title-wrap">
+					<a class="site-title-link" href="/">
+						<h1 data-site-title>昔涟</h1>
+					</a>
+					<div class="title-stripe"></div>
+				</div>
+				<a class="button-link" href="/">返回</a>
+			</div>
+		</header>
+
+		<main class="container detail-page">
+			<h1>图片详情</h1>
+			<section
+				id="detailLayout"
+				class="detail-layout detail-ratio-unknown"
+			>
+				<div class="detail-preview-wrap">
+					<img id="preview" class="detail-image" />
+				</div>
+				<div class="detail-side">
+					<div id="detail" class="detail-meta"></div>
+					<div class="detail-nav">
+						<button id="prevButton">上一张</button>
+						<button id="nextButton">下一张</button>
+					</div>
+				</div>
+			</section>
+		</main>
+		<script type="module" src="/image.js"></script>
+	</body>
+</html>

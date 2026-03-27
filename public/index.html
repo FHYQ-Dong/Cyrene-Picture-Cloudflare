@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>昔涟 | 图片展示</title>
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="stylesheet" href="/styles.css" />
+	</head>
+	<body>
+		<header class="site-header">
+			<div class="site-header-inner container">
+				<div class="site-title-wrap">
+					<a class="site-title-link" href="/">
+						<h1 data-site-title>昔涟</h1>
+					</a>
+					<div class="title-stripe"></div>
+				</div>
+				<a class="button-link" href="/upload.html">上传图片</a>
+			</div>
+		</header>
+
+		<main class="container gallery-page">
+			<section class="toolbar card">
+				<div class="toolbar-row">
+					<label>
+						分隔方式
+						<select id="groupBySelect">
+							<option value="date">按日期</option>
+							<option value="uploader">按上传者</option>
+							<option value="none">不分组</option>
+						</select>
+					</label>
+					<label>
+						上传者筛选
+						<select id="uploaderFilter">
+							<option value="">全部上传者</option>
+						</select>
+					</label>
+					<button id="refreshButton">刷新列表</button>
+				</div>
+			</section>
+
+			<section id="groupContainer"></section>
+			<div class="load-more-wrap">
+				<button id="loadMoreButton">加载更多</button>
+			</div>
+		</main>
+
+		<script type="module" src="/main.js"></script>
+	</body>
+</html>

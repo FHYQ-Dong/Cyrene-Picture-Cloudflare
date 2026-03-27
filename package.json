@@ -1,0 +1,24 @@
+{
+  "name": "cyrene-picture-cloudflare",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler pages dev public",
+    "deploy": "wrangler pages deploy public --project-name cyrene-picture-cloudflare",
+    "test": "node --experimental-specifier-resolution=node --test tests/**/*.test.js",
+    "db:migrate:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/schema.sql",
+    "db:migrate:v2:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/migrate-v2-uploader-nickname.sql",
+    "db:migrate:v2:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v2-uploader-nickname.sql",
+    "db:migrate:v3:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/migrate-v3-thumbnails.sql",
+    "db:migrate:v3:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v3-thumbnails.sql",
+    "db:migrate:v5:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/migrate-v5-hash-dedup.sql",
+    "db:migrate:v5:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v5-hash-dedup.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4.11.1"
+  },
+  "dependencies": {
+    "aws4fetch": "^1.0.20"
+  }
+}
