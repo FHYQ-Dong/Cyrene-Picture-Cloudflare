@@ -23,7 +23,7 @@ THUMBNAIL_WIDTH = "360"
 THUMBNAIL_FORMAT = "webp"
 THUMBNAIL_QUALITY = "80"
 THUMBNAIL_GENERATOR = "enabled"
-THUMBNAIL_RESIZE_BASE_URL = "https://cyrene.fhyq.cloud"
+THUMBNAIL_RESIZE_BASE_URL = "https://img.cyrene.fhyq.cloud"
 TURNSTILE_SITE_KEY = "0x4AAAAAACw3tdATrEfmULlt"
 
 [[d1_databases]]
