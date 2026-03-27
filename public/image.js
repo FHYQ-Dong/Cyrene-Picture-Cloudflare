@@ -6,6 +6,37 @@ const prevButton = document.getElementById("prevButton");
 const nextButton = document.getElementById("nextButton");
 const detailLayout = document.getElementById("detailLayout");
 
+function parseAsUtcDate(dateText) {
+	const raw = String(dateText || "").trim();
+	if (!raw) return null;
+
+	if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+		const parsed = new Date(`${raw}T00:00:00Z`);
+		return Number.isNaN(parsed.getTime()) ? null : parsed;
+	}
+
+	if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}$/.test(raw)) {
+		const parsed = new Date(raw.replace(" ", "T") + "Z");
+		return Number.isNaN(parsed.getTime()) ? null : parsed;
+	}
+
+	if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(raw)) {
+		const parsed = new Date(`${raw}Z`);
+		return Number.isNaN(parsed.getTime()) ? null : parsed;
+	}
+
+	const parsed = new Date(raw);
+	return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatDateTimeGmt8(dateText) {
+	const parsed = parseAsUtcDate(dateText);
+	if (!parsed) return "未知";
+	const gmt8 = new Date(parsed.getTime() + 8 * 60 * 60 * 1000);
+	const iso = gmt8.toISOString();
+	return `${iso.slice(0, 10)} ${iso.slice(11, 19)}`;
+}
+
 function getAspectType(data) {
 	const width = Number(data.width || 0);
 	const height = Number(data.height || 0);
@@ -55,9 +86,7 @@ async function load() {
 	const sizeText = width > 0 && height > 0 ? `${width} × ${height}` : "未知";
 	detail.innerHTML = `
 		<div><strong>上传者：</strong>${data.uploader_nickname || "093"}</div>
-		<div><strong>上传时间：</strong>${String(data.created_at || "")
-			.replace("T", " ")
-			.replace("Z", "")}</div>
+		<div><strong>上传时间：</strong>${formatDateTimeGmt8(data.created_at)}</div>
 		<div><strong>分辨率：</strong>${sizeText}</div>
 		<div><strong>图片 ID：</strong>${data.image_id}</div>
 	`;

@@ -3,8 +3,34 @@ import { listImages } from "../_shared/db";
 import { getConfig } from "../_shared/env";
 import { resolveImageUrl, resolveThumbUrl } from "../_shared/image-url";
 
-function toDateBucket(isoText) {
-	return String(isoText || "").slice(0, 10) || "unknown";
+function parseAsUtcDate(dateText) {
+	const raw = String(dateText || "").trim();
+	if (!raw) return null;
+
+	if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+		const parsed = new Date(`${raw}T00:00:00Z`);
+		return Number.isNaN(parsed.getTime()) ? null : parsed;
+	}
+
+	if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}$/.test(raw)) {
+		const parsed = new Date(raw.replace(" ", "T") + "Z");
+		return Number.isNaN(parsed.getTime()) ? null : parsed;
+	}
+
+	if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(raw)) {
+		const parsed = new Date(`${raw}Z`);
+		return Number.isNaN(parsed.getTime()) ? null : parsed;
+	}
+
+	const parsed = new Date(raw);
+	return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function toDateBucketGmt8(dateText) {
+	const parsed = parseAsUtcDate(dateText);
+	if (!parsed) return "unknown";
+	const gmt8 = new Date(parsed.getTime() + 8 * 60 * 60 * 1000);
+	return gmt8.toISOString().slice(0, 10);
 }
 
 function buildGroups(items, groupBy) {
@@ -14,7 +40,7 @@ function buildGroups(items, groupBy) {
 		const key =
 			groupBy === "uploader"
 				? item.uploader_nickname || "093"
-				: toDateBucket(item.created_at);
+				: toDateBucketGmt8(item.created_at);
 		if (!map.has(key)) map.set(key, []);
 		map.get(key).push(item.image_id);
 	}

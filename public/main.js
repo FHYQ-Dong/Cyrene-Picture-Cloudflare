@@ -11,6 +11,36 @@ let isLoading = false;
 let groupByCustomSelect = null;
 let uploaderCustomSelect = null;
 
+function parseAsUtcDate(dateText) {
+	const raw = String(dateText || "").trim();
+	if (!raw) return null;
+
+	if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+		const parsed = new Date(`${raw}T00:00:00Z`);
+		return Number.isNaN(parsed.getTime()) ? null : parsed;
+	}
+
+	if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}$/.test(raw)) {
+		const parsed = new Date(raw.replace(" ", "T") + "Z");
+		return Number.isNaN(parsed.getTime()) ? null : parsed;
+	}
+
+	if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(raw)) {
+		const parsed = new Date(`${raw}Z`);
+		return Number.isNaN(parsed.getTime()) ? null : parsed;
+	}
+
+	const parsed = new Date(raw);
+	return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatDateGmt8(dateText) {
+	const parsed = parseAsUtcDate(dateText);
+	if (!parsed) return "未知日期";
+	const gmt8 = new Date(parsed.getTime() + 8 * 60 * 60 * 1000);
+	return gmt8.toISOString().slice(0, 10);
+}
+
 function closeAllCustomSelects(except = null) {
 	document.querySelectorAll(".custom-select.is-open").forEach((node) => {
 		if (except && node === except) return;
@@ -122,7 +152,7 @@ function getAspectInfo(item) {
 
 function groupTitle(groupBy, groupKey) {
 	if (groupBy === "uploader") return `上传者：${groupKey}`;
-	if (groupBy === "date") return `上传日期：${groupKey}`;
+	if (groupBy === "date") return `上传日期：${formatDateGmt8(groupKey)}`;
 	return "图片";
 }
 
@@ -154,9 +184,9 @@ function createImageCard(item) {
 
 	const meta = document.createElement("div");
 	meta.className = "image-meta";
-	meta.textContent = `${item.uploader_nickname || "093"} · ${String(
-		item.created_at || ""
-	).slice(0, 10)}`;
+	meta.textContent = `${item.uploader_nickname || "093"} · ${formatDateGmt8(
+		item.created_at
+	)}`;
 
 	card.appendChild(thumbLink);
 	card.appendChild(meta);
