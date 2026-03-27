@@ -210,6 +210,44 @@ curl -I "http://127.0.0.1:8788/api/object?key=<thumb_object_key>"
 -   检查 `PUBLIC_IMAGE_BASE_URL/<object_key>` 是否能被公网访问。
 -   检查该域名是否在 Cloudflare 代理下并已启用 Image Resizing。
 
+## 批量重试 `failed` 缩略图（自动触发）
+
+新增管理接口：`POST /api/admin/thumbnail-repair`
+
+### 1) 先配置管理令牌（Pages Secret）
+
+```bash
+wrangler pages secret put ADMIN_API_TOKEN --project-name cyrene-picture-cloudflare
+```
+
+请求时通过 Header 传入：`x-admin-token: <ADMIN_API_TOKEN>`。
+
+也支持：`Authorization: Bearer <ADMIN_API_TOKEN>`。
+
+### 2) 先 dry-run 看将处理哪些记录
+
+```bash
+curl -X POST "https://cyrene.fhyq.cloud/api/admin/thumbnail-repair?limit=50&dryRun=true" \
+    -H "x-admin-token: <ADMIN_API_TOKEN>"
+```
+
+### 3) 真正执行批量重试
+
+```bash
+curl -X POST "https://cyrene.fhyq.cloud/api/admin/thumbnail-repair?limit=50" \
+    -H "x-admin-token: <ADMIN_API_TOKEN>"
+```
+
+返回会包含 `picked/processed/succeeded/failed` 与每条记录结果。
+
+> 兼容说明：旧路径 `/api/admin/retry-thumbnails` 仍可用，但建议迁移到 `/api/admin/thumbnail-repair`。
+
+### 4) 重试后查看状态分布
+
+```bash
+wrangler d1 execute cyrene_meta --remote --command "SELECT thumb_status, COUNT(*) AS cnt FROM images GROUP BY thumb_status ORDER BY cnt DESC;"
+```
+
 ## 目录
 
 -   `public/`: 前端页面
@@ -240,6 +278,8 @@ npm install
     - `R2_ACCESS_KEY_ID`
     - `R2_SECRET_ACCESS_KEY`
     - `CLOUDFLARE_ACCOUNT_ID`
+    - `UPLOAD_TOKEN_SECRET`
+    - `ADMIN_API_TOKEN`
     - `TURNSTILE_SITE_KEY`（**Pages Variable**，不是 Secret）
 
 ```bash
@@ -247,10 +287,19 @@ wrangler pages secret put TURNSTILE_SECRET_KEY --project-name cyrene-picture-clo
 wrangler pages secret put R2_ACCESS_KEY_ID --project-name cyrene-picture-cloudflare
 wrangler pages secret put R2_SECRET_ACCESS_KEY --project-name cyrene-picture-cloudflare
 wrangler pages secret put CLOUDFLARE_ACCOUNT_ID --project-name cyrene-picture-cloudflare
+wrangler pages secret put UPLOAD_TOKEN_SECRET --project-name cyrene-picture-cloudflare
+wrangler pages secret put ADMIN_API_TOKEN --project-name cyrene-picture-cloudflare
 # TURNSTILE_SITE_KEY 请在 Pages 项目 Variables 中配置
 ```
 
-5. 配置前端 Turnstile Site Key（生产环境变量）
+5. 运行 v7 迁移（新增 upload token 与 admin 审计表）
+
+```bash
+npm run db:migrate:v7:local
+npm run db:migrate:v7:remote
+```
+
+6. 配置前端 Turnstile Site Key（生产环境变量）
     - 在 Pages 项目 Variables 中新增：`TURNSTILE_SITE_KEY="<your-site-key>"`
     - 不需要再修改 `public/*.html`
 

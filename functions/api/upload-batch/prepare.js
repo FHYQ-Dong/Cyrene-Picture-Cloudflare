@@ -7,6 +7,8 @@ import { verifyTurnstile } from "../../_shared/turnstile.js";
 import { createObjectKey } from "../../_shared/identity.js";
 import { createPresignedPutUrl } from "../../_shared/r2-presign.js";
 import { normalizeUploaderNickname } from "../../_shared/nickname.js";
+import { issueUploadToken } from "../../_shared/upload-token.js";
+import { createUploadTokenRecord } from "../../_shared/db.js";
 
 const MAX_BATCH_ITEMS = 20;
 
@@ -52,6 +54,16 @@ export async function onRequestPost(context) {
 
 		const acceptedItems = [];
 		const rejectedItems = [];
+
+		const shouldIssueToken = config.uploadCompleteRequireToken;
+		if (shouldIssueToken && !config.uploadTokenSecret) {
+			return jsonError(
+				ErrorCode.ConfigMissing,
+				"missing UPLOAD_TOKEN_SECRET",
+				500,
+				{ required: ["UPLOAD_TOKEN_SECRET"] }
+			);
+		}
 
 		for (const item of items) {
 			if (!item.filename || !item.mime || item.size <= 0) {
@@ -156,11 +168,34 @@ export async function onRequestPost(context) {
 				config.uploaderNicknameMaxLength
 			);
 
+			let issuedToken = null;
+			if (shouldIssueToken) {
+				issuedToken = await issueUploadToken(config, {
+					objectKey,
+					mime: item.mime,
+					size: item.size,
+					visitorId: identity.visitorId,
+					ipHash: identity.ipHash,
+				});
+
+				await createUploadTokenRecord(env.DB, {
+					tokenId: issuedToken.tokenId,
+					objectKey,
+					mime: item.mime,
+					size: item.size,
+					issuedVisitorId: identity.visitorId,
+					issuedIpHash: identity.ipHash,
+					expiresAt: issuedToken.expiresAt,
+				});
+			}
+
 			acceptedItems.push({
 				clientFileId: item.clientFileId,
 				objectKey,
 				uploadUrl,
 				requiredHeaders,
+				uploadToken: issuedToken?.token || "",
+				uploadTokenExpiresAt: issuedToken?.expiresAt || "",
 				expiresIn: config.uploadUrlTtlSeconds,
 				uploaderNickname: normalizedNickname.nickname,
 				mime: item.mime,

@@ -8,6 +8,8 @@ import { createObjectKey } from "../_shared/identity";
 import { createPresignedPutUrl } from "../_shared/r2-presign";
 import { writeLog } from "../_shared/log";
 import { normalizeUploaderNickname } from "../_shared/nickname";
+import { issueUploadToken } from "../_shared/upload-token";
+import { createUploadTokenRecord } from "../_shared/db";
 
 export async function onRequestPost(context) {
 	const { request, env } = context;
@@ -110,6 +112,8 @@ export async function onRequestPost(context) {
 		const objectKey = createObjectKey(body.filename);
 		let uploadUrl;
 		let requiredHeaders;
+		let uploadToken = "";
+		let uploadTokenExpiresAt = "";
 
 		if (config.localUploadDirect) {
 			uploadUrl = `/api/upload-direct?objectKey=${encodeURIComponent(
@@ -129,6 +133,38 @@ export async function onRequestPost(context) {
 			requiredHeaders = presigned.requiredHeaders;
 		}
 
+		if (config.uploadCompleteRequireToken) {
+			if (!config.uploadTokenSecret) {
+				return jsonError(
+					ErrorCode.ConfigMissing,
+					"missing UPLOAD_TOKEN_SECRET",
+					500,
+					{ required: ["UPLOAD_TOKEN_SECRET"] }
+				);
+			}
+
+			const issuedToken = await issueUploadToken(config, {
+				objectKey,
+				mime: body.mime,
+				size: body.size,
+				visitorId: identity.visitorId,
+				ipHash: identity.ipHash,
+			});
+
+			await createUploadTokenRecord(env.DB, {
+				tokenId: issuedToken.tokenId,
+				objectKey,
+				mime: body.mime,
+				size: body.size,
+				issuedVisitorId: identity.visitorId,
+				issuedIpHash: identity.ipHash,
+				expiresAt: issuedToken.expiresAt,
+			});
+
+			uploadToken = issuedToken.token;
+			uploadTokenExpiresAt = issuedToken.expiresAt;
+		}
+
 		writeLog("info", {
 			request_id: requestId,
 			route: "POST /api/upload-url",
@@ -144,6 +180,8 @@ export async function onRequestPost(context) {
 			objectKey,
 			uploadUrl,
 			requiredHeaders,
+			uploadToken,
+			uploadTokenExpiresAt,
 			uploaderNickname: normalizedNickname.nickname,
 			expiresIn: config.uploadUrlTtlSeconds,
 		});

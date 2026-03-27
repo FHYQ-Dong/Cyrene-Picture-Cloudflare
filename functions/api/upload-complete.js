@@ -2,6 +2,7 @@ import { ErrorCode, jsonError, jsonOk } from "../_shared/errors.js";
 import { getConfig } from "../_shared/env.js";
 import {
 	createOrReuseImageObject,
+	consumeUploadTokenRecord,
 	createUploadEvent,
 	getImageObjectById,
 	getLatestImageByObjectKey,
@@ -18,6 +19,7 @@ import {
 	createThumbObjectKey,
 	processThumbnailJob,
 } from "../_shared/thumbnail.js";
+import { verifyUploadTokenSignature } from "../_shared/upload-token.js";
 
 async function computeObjectContentHash(env, objectKey) {
 	const object = await env.R2.get(objectKey);
@@ -50,6 +52,7 @@ export async function onRequestPost(context) {
 
 		const requestedHash = normalizeContentHash(body.contentHash);
 		const requestedObjectId = String(body.dedupObjectId || "").trim();
+		const uploadToken = String(body.uploadToken || "").trim();
 
 		let objectKey = String(body.objectKey || "").trim();
 		let contentHash = requestedHash;
@@ -88,6 +91,78 @@ export async function onRequestPost(context) {
 					ErrorCode.InvalidRequest,
 					"missing objectKey",
 					400
+				);
+			}
+
+			if (config.uploadCompleteRequireToken && !uploadToken) {
+				return jsonError(
+					ErrorCode.UploadTokenMissing,
+					"missing uploadToken",
+					403
+				);
+			}
+
+			if (uploadToken) {
+				const verified = await verifyUploadTokenSignature(
+					config,
+					uploadToken
+				);
+				if (!verified.ok) {
+					const reason = verified.reason;
+					if (reason === "UPLOAD_TOKEN_SECRET_MISSING") {
+						return jsonError(
+							ErrorCode.ConfigMissing,
+							"missing UPLOAD_TOKEN_SECRET",
+							500,
+							{ required: ["UPLOAD_TOKEN_SECRET"] }
+						);
+					}
+					return jsonError(
+						ErrorCode.UploadTokenInvalid,
+						"invalid uploadToken",
+						403
+					);
+				}
+
+				const tokenPayload = verified.payload || {};
+				if (new Date(tokenPayload.expiresAt).getTime() < Date.now()) {
+					return jsonError(
+						ErrorCode.UploadTokenExpired,
+						"uploadToken expired",
+						403
+					);
+				}
+
+				const sameObjectKey = tokenPayload.objectKey === objectKey;
+				const sameMime = tokenPayload.mime === body.mime;
+				const sameSize =
+					Number(tokenPayload.size) === Number(body.size);
+				if (!sameObjectKey || !sameMime || !sameSize) {
+					return jsonError(
+						ErrorCode.UploadTokenBindingMismatch,
+						"uploadToken binding mismatch",
+						403
+					);
+				}
+
+				const consumed = await consumeUploadTokenRecord(env.DB, {
+					tokenId: tokenPayload.jti,
+					objectKey,
+					mime: body.mime,
+					size: body.size,
+				});
+				if (!consumed) {
+					return jsonError(
+						ErrorCode.UploadTokenAlreadyUsed,
+						"uploadToken already used or expired",
+						403
+					);
+				}
+			} else if (config.uploadCompleteRequireToken) {
+				return jsonError(
+					ErrorCode.UploadTokenMissing,
+					"missing uploadToken",
+					403
 				);
 			}
 

@@ -13,7 +13,9 @@
     "db:migrate:v3:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/migrate-v3-thumbnails.sql",
     "db:migrate:v3:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v3-thumbnails.sql",
     "db:migrate:v5:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/migrate-v5-hash-dedup.sql",
-    "db:migrate:v5:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v5-hash-dedup.sql"
+    "db:migrate:v5:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v5-hash-dedup.sql",
+    "db:migrate:v7:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/migrate-v7-upload-token-admin-audit.sql",
+    "db:migrate:v7:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v7-upload-token-admin-audit.sql"
   },
   "devDependencies": {
     "wrangler": "^4.11.1"

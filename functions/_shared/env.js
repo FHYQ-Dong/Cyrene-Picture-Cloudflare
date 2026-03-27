@@ -29,6 +29,16 @@ export function getConfig(env) {
 		),
 		ratePerMinuteIp: readNumber(env, "UPLOAD_RATE_LIMIT_PER_MIN_IP", 120),
 		uploadUrlTtlSeconds: readNumber(env, "UPLOAD_URL_TTL_SECONDS", 900),
+		uploadTokenTtlSeconds: readNumber(env, "UPLOAD_TOKEN_TTL_SECONDS", 900),
+		uploadCompleteRequireToken:
+			(env.UPLOAD_COMPLETE_REQUIRE_TOKEN || "false") === "true",
+		uploadTokenSecret: String(env.UPLOAD_TOKEN_SECRET || "").trim(),
+		adminApiToken: String(env.ADMIN_API_TOKEN || "").trim(),
+		adminApiRateLimitPerMin: readNumber(
+			env,
+			"ADMIN_API_RATE_LIMIT_PER_MIN",
+			10
+		),
 		allowedMime: new Set([
 			"image/jpeg",
 			"image/png",

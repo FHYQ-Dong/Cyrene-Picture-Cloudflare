@@ -519,6 +519,7 @@ uploadButton.addEventListener("click", async () => {
 				clientFileId: result.clientFileId,
 				dedupHit: false,
 				contentHash: result.item.contentHash,
+				uploadToken: result.prepared.uploadToken,
 				objectKey: result.prepared.objectKey,
 				mime: result.item.file.type,
 				size: result.item.file.size,

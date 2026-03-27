@@ -11,6 +11,12 @@ export const ErrorCode = {
 	ObjectNotFound: "OBJECT_NOT_FOUND",
 	HashCheckFailed: "HASH_CHECK_FAILED",
 	HashMismatch: "HASH_MISMATCH",
+	UploadTokenMissing: "UPLOAD_TOKEN_MISSING",
+	UploadTokenInvalid: "UPLOAD_TOKEN_INVALID",
+	UploadTokenExpired: "UPLOAD_TOKEN_EXPIRED",
+	UploadTokenAlreadyUsed: "UPLOAD_TOKEN_ALREADY_USED",
+	UploadTokenBindingMismatch: "UPLOAD_TOKEN_BINDING_MISMATCH",
+	AdminUnauthorized: "ADMIN_UNAUTHORIZED",
 	InternalError: "INTERNAL_ERROR",
 };
 

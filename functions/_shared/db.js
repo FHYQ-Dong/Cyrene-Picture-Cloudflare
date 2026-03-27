@@ -272,3 +272,92 @@ export async function getImageNeighbors(db, image) {
 
 	return { prev: prev || null, next: next || null };
 }
+
+export async function createUploadTokenRecord(db, payload) {
+	const timestamp = nowIso();
+	await db
+		.prepare(
+			`INSERT INTO upload_tokens (
+         token_id,
+         object_key,
+         mime,
+         size_bytes,
+         issued_visitor_id,
+         issued_ip_hash,
+         expires_at,
+         consumed_at,
+         created_at,
+         updated_at
+       )
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9)`
+		)
+		.bind(
+			payload.tokenId,
+			payload.objectKey,
+			payload.mime,
+			Number(payload.size || 0),
+			payload.issuedVisitorId || null,
+			payload.issuedIpHash || null,
+			payload.expiresAt,
+			timestamp,
+			timestamp
+		)
+		.run();
+}
+
+export async function consumeUploadTokenRecord(db, payload) {
+	const timestamp = nowIso();
+	const result = await db
+		.prepare(
+			`UPDATE upload_tokens
+       SET consumed_at = ?2,
+           updated_at = ?2
+       WHERE token_id = ?1
+         AND consumed_at IS NULL
+         AND object_key = ?3
+         AND mime = ?4
+         AND size_bytes = ?5
+         AND expires_at >= ?2`
+		)
+		.bind(
+			payload.tokenId,
+			timestamp,
+			payload.objectKey,
+			payload.mime,
+			Number(payload.size || 0)
+		)
+		.run();
+
+	return Number(result?.meta?.changes || 0) > 0;
+}
+
+export async function writeAdminActionLog(db, payload) {
+	const timestamp = nowIso();
+	await db
+		.prepare(
+			`INSERT INTO admin_action_logs (
+         action_id,
+         action_type,
+         actor_token_hash,
+         ip_hash,
+         request_id,
+         params_json,
+         result_json,
+         status,
+         created_at
+       )
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`
+		)
+		.bind(
+			payload.actionId || crypto.randomUUID(),
+			payload.actionType,
+			payload.actorTokenHash,
+			payload.ipHash,
+			payload.requestId || null,
+			JSON.stringify(payload.params || {}),
+			JSON.stringify(payload.result || {}),
+			payload.status || "ok",
+			timestamp
+		)
+		.run();
+}
