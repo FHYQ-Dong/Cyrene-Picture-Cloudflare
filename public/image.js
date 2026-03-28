@@ -5,6 +5,7 @@ const preview = document.getElementById("preview");
 const prevButton = document.getElementById("prevButton");
 const nextButton = document.getElementById("nextButton");
 const detailLayout = document.getElementById("detailLayout");
+let currentDetailData = null;
 
 function parseAsUtcDate(dateText) {
 	const raw = String(dateText || "").trim();
@@ -65,6 +66,40 @@ function bindNeighborButton(button, neighbor) {
 	button.onclick = () => navigateToImage(neighbor.image_id);
 }
 
+function resolveDisplayDimensions(data) {
+	const width = Number(data?.width || 0);
+	const height = Number(data?.height || 0);
+	if (width > 0 && height > 0) {
+		return { width, height };
+	}
+
+	const naturalWidth = Number(preview?.naturalWidth || 0);
+	const naturalHeight = Number(preview?.naturalHeight || 0);
+	if (naturalWidth > 0 && naturalHeight > 0) {
+		return {
+			width: naturalWidth,
+			height: naturalHeight,
+		};
+	}
+
+	return { width: null, height: null };
+}
+
+function renderDetailPanel(data) {
+	const dimensions = resolveDisplayDimensions(data);
+	const sizeText =
+		dimensions.width && dimensions.height
+			? `${dimensions.width} × ${dimensions.height}`
+			: "未知";
+
+	detail.innerHTML = `
+		<div><strong>上传者：</strong>${data.uploader_nickname || "093"}</div>
+		<div><strong>上传时间：</strong>${formatDateTimeGmt8(data.created_at)}</div>
+		<div><strong>分辨率：</strong>${sizeText}</div>
+		<div><strong>图片 ID：</strong>${data.image_id}</div>
+	`;
+}
+
 async function load() {
 	const url = new URL(window.location.href);
 	const id = url.searchParams.get("id");
@@ -81,15 +116,8 @@ async function load() {
 	}
 
 	const data = payload.data;
-	const width = Number(data.width || 0);
-	const height = Number(data.height || 0);
-	const sizeText = width > 0 && height > 0 ? `${width} × ${height}` : "未知";
-	detail.innerHTML = `
-		<div><strong>上传者：</strong>${data.uploader_nickname || "093"}</div>
-		<div><strong>上传时间：</strong>${formatDateTimeGmt8(data.created_at)}</div>
-		<div><strong>分辨率：</strong>${sizeText}</div>
-		<div><strong>图片 ID：</strong>${data.image_id}</div>
-	`;
+	currentDetailData = data;
+	renderDetailPanel(data);
 
 	if (detailLayout) {
 		detailLayout.classList.remove(
@@ -103,6 +131,10 @@ async function load() {
 
 	bindNeighborButton(prevButton, data.prev);
 	bindNeighborButton(nextButton, data.next);
+	preview.onload = () => {
+		if (!currentDetailData) return;
+		renderDetailPanel(currentDetailData);
+	};
 	preview.src = data.public_url;
 }
 

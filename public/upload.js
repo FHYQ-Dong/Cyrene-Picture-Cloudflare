@@ -302,6 +302,42 @@ async function computeFileHash(file) {
 	return `sha256:${hex}`;
 }
 
+async function getImageDimensionsFromFile(file) {
+	if (window.createImageBitmap) {
+		try {
+			const bitmap = await createImageBitmap(file);
+			const width = Number(bitmap.width || 0);
+			const height = Number(bitmap.height || 0);
+			bitmap.close();
+			if (width > 0 && height > 0) {
+				return { width, height };
+			}
+		} catch {
+			// ignore and fallback
+		}
+	}
+
+	return new Promise((resolve) => {
+		const objectUrl = URL.createObjectURL(file);
+		const image = new Image();
+		image.onload = () => {
+			const width = Number(image.naturalWidth || 0);
+			const height = Number(image.naturalHeight || 0);
+			URL.revokeObjectURL(objectUrl);
+			if (width > 0 && height > 0) {
+				resolve({ width, height });
+				return;
+			}
+			resolve({ width: null, height: null });
+		};
+		image.onerror = () => {
+			URL.revokeObjectURL(objectUrl);
+			resolve({ width: null, height: null });
+		};
+		image.src = objectUrl;
+	});
+}
+
 async function uploadFile(uploadUrl, file, requiredHeaders) {
 	let response;
 	try {
@@ -377,6 +413,9 @@ uploadButton.addEventListener("click", async () => {
 				message: `计算哈希中（${index + 1}/${batchItems.length}）`,
 			});
 			current.contentHash = await computeFileHash(current.file);
+			const dimensions = await getImageDimensionsFromFile(current.file);
+			current.width = dimensions.width;
+			current.height = dimensions.height;
 		}
 
 		setSummary("执行哈希预检...", "pending");
@@ -508,6 +547,8 @@ uploadButton.addEventListener("click", async () => {
 				contentHash: item.contentHash,
 				mime: item.file.type,
 				size: item.file.size,
+				width: item.width,
+				height: item.height,
 				uploaderNickname,
 				originalFilename: item.file.name,
 			});
@@ -523,6 +564,8 @@ uploadButton.addEventListener("click", async () => {
 				objectKey: result.prepared.objectKey,
 				mime: result.item.file.type,
 				size: result.item.file.size,
+				width: result.item.width,
+				height: result.item.height,
 				etag: result.etag,
 				uploaderNickname,
 				originalFilename: result.item.file.name,

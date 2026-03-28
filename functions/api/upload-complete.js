@@ -28,6 +28,13 @@ async function computeObjectContentHash(env, objectKey) {
 	return sha256HexFromArrayBuffer(bytes);
 }
 
+function normalizeDimension(rawValue) {
+	const value = Number(rawValue);
+	if (!Number.isFinite(value)) return null;
+	const normalized = Math.trunc(value);
+	return normalized > 0 ? normalized : null;
+}
+
 export async function onRequestPost(context) {
 	const { request, env, waitUntil } = context;
 	const config = getConfig(env);
@@ -53,6 +60,8 @@ export async function onRequestPost(context) {
 		const requestedHash = normalizeContentHash(body.contentHash);
 		const requestedObjectId = String(body.dedupObjectId || "").trim();
 		const uploadToken = String(body.uploadToken || "").trim();
+		const width = normalizeDimension(body.width);
+		const height = normalizeDimension(body.height);
 
 		let objectKey = String(body.objectKey || "").trim();
 		let contentHash = requestedHash;
@@ -244,6 +253,8 @@ export async function onRequestPost(context) {
 			mime: body.mime,
 			size: Number(imageObject.size_bytes || body.size),
 			uploaderNickname: normalizedNickname.nickname,
+			width,
+			height,
 			thumbObjectKey: inheritedThumbReady
 				? latestForObject.thumb_object_key
 				: null,

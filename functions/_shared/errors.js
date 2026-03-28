@@ -17,6 +17,11 @@ export const ErrorCode = {
 	UploadTokenAlreadyUsed: "UPLOAD_TOKEN_ALREADY_USED",
 	UploadTokenBindingMismatch: "UPLOAD_TOKEN_BINDING_MISMATCH",
 	AdminUnauthorized: "ADMIN_UNAUTHORIZED",
+	BatchLimitExceeded: "BATCH_LIMIT_EXCEEDED",
+	ImageAlreadyDeleted: "IMAGE_ALREADY_DELETED",
+	ObjectRefConflict: "OBJECT_REF_CONFLICT",
+	R2DeleteFailed: "R2_DELETE_FAILED",
+	PartialDeleteStorageFailed: "PARTIAL_DELETE_STORAGE_FAILED",
 	InternalError: "INTERNAL_ERROR",
 };
 

@@ -629,6 +629,9 @@ button:disabled {
 	border-radius: 12px;
 	padding: 10px;
 	background: #fff;
+	display: flex;
+	justify-content: center;
+	align-items: center;
 }
 
 .detail-side {
@@ -648,8 +651,11 @@ button:disabled {
 .detail-image {
 	max-width: 100%;
 	max-height: 78vh;
-	width: 100%;
+	width: auto;
 	height: auto;
+	object-fit: contain;
+	display: block;
+	margin: 0 auto;
 	border-radius: 10px;
 	border: 1px solid #f1dbe7;
 }

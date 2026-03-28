@@ -242,6 +242,52 @@ curl -X POST "https://cyrene.fhyq.cloud/api/admin/thumbnail-repair?limit=50" \
 
 > 兼容说明：旧路径 `/api/admin/retry-thumbnails` 仍可用，但建议迁移到 `/api/admin/thumbnail-repair`。
 
+## 管理员删除图片（v8）
+
+新增管理接口：
+
+-   `POST /api/admin/delete-image`（单图）
+-   `POST /api/admin/delete-images`（批量）
+
+### 1) 变量配置
+
+-   `ADMIN_DELETE_BATCH_MAX_ITEMS`（默认 `50`）
+-   `ADMIN_DELETE_ALLOW_DRY_RUN`（默认 `true`）
+
+### 2) 单图 dry-run
+
+```bash
+curl -X POST "https://cyrene.fhyq.cloud/api/admin/delete-image" \
+    -H "content-type: application/json" \
+    -H "x-admin-token: <ADMIN_API_TOKEN>" \
+    -d '{"imageId":"<IMAGE_ID>","dryRun":true,"reason":"manual check"}'
+```
+
+### 3) 单图实际删除
+
+```bash
+curl -X POST "https://cyrene.fhyq.cloud/api/admin/delete-image" \
+    -H "content-type: application/json" \
+    -H "x-admin-token: <ADMIN_API_TOKEN>" \
+    -d '{"imageId":"<IMAGE_ID>","dryRun":false,"reason":"content moderation"}'
+```
+
+### 4) 批量删除
+
+```bash
+curl -X POST "https://cyrene.fhyq.cloud/api/admin/delete-images" \
+    -H "content-type: application/json" \
+    -H "x-admin-token: <ADMIN_API_TOKEN>" \
+    -d '{"imageIds":["<ID1>","<ID2>"],"dryRun":false,"continueOnError":true,"reason":"batch cleanup"}'
+```
+
+### 5) 行为说明
+
+-   删除采用“先软删元数据，再按引用计数条件删 R2 对象”。
+-   共享对象仅在 `ref_count` 归零时才会触发对象删除。
+-   所有请求均写入 `admin_action_logs` 审计记录。
+-   批量删除超限会返回 `BATCH_LIMIT_EXCEEDED`。
+
 ### 4) 重试后查看状态分布
 
 ```bash
@@ -280,6 +326,8 @@ npm install
     - `CLOUDFLARE_ACCOUNT_ID`
     - `UPLOAD_TOKEN_SECRET`
     - `ADMIN_API_TOKEN`
+    - `ADMIN_DELETE_BATCH_MAX_ITEMS`（可选，默认 50）
+    - `ADMIN_DELETE_ALLOW_DRY_RUN`（可选，默认 true）
     - `TURNSTILE_SITE_KEY`（**Pages Variable**，不是 Secret）
 
 ```bash

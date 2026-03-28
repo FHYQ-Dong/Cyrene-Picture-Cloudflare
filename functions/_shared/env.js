@@ -39,6 +39,13 @@ export function getConfig(env) {
 			"ADMIN_API_RATE_LIMIT_PER_MIN",
 			10
 		),
+		adminDeleteBatchMaxItems: readNumber(
+			env,
+			"ADMIN_DELETE_BATCH_MAX_ITEMS",
+			50
+		),
+		adminDeleteAllowDryRun:
+			(env.ADMIN_DELETE_ALLOW_DRY_RUN || "true") === "true",
 		allowedMime: new Set([
 			"image/jpeg",
 			"image/png",

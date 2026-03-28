@@ -15,6 +15,8 @@ function normalizeItems(rawItems) {
 		mime: String(item?.mime || "").toLowerCase(),
 		size: Number(item?.size || 0),
 		etag: String(item?.etag || "").trim(),
+		width: Number(item?.width || 0),
+		height: Number(item?.height || 0),
 		uploaderNickname: item?.uploaderNickname,
 		batchId: item?.batchId,
 		originalFilename: item?.originalFilename,
@@ -44,6 +46,8 @@ export async function onRequestPost(context) {
 				mime: item.mime,
 				size: item.size,
 				etag: item.etag,
+				width: item.width,
+				height: item.height,
 				uploaderNickname: item.uploaderNickname,
 				originalFilename: item.originalFilename,
 			};

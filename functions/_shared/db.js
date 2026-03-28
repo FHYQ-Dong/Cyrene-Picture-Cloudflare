@@ -159,6 +159,84 @@ export async function getImageById(db, imageId) {
 		.first();
 }
 
+export async function listImagesForDimensionBackfill(
+	db,
+	limit = 50,
+	onlyMissing = true
+) {
+	if (onlyMissing) {
+		const rows = await db
+			.prepare(
+				`SELECT image_id, object_key, mime, width, height, created_at
+         FROM images
+         WHERE status = 'active'
+           AND (
+             width IS NULL OR height IS NULL OR width <= 0 OR height <= 0
+           )
+         ORDER BY created_at DESC
+         LIMIT ?1`
+			)
+			.bind(limit)
+			.all();
+		return rows.results || [];
+	}
+
+	const rows = await db
+		.prepare(
+			`SELECT image_id, object_key, mime, width, height, created_at
+       FROM images
+       WHERE status = 'active'
+       ORDER BY created_at DESC
+       LIMIT ?1`
+		)
+		.bind(limit)
+		.all();
+
+	return rows.results || [];
+}
+
+export async function updateImageDimensions(db, imageId, width, height) {
+	const result = await db
+		.prepare(
+			`UPDATE images
+       SET width = ?2,
+           height = ?3,
+           updated_at = ?4
+       WHERE image_id = ?1`
+		)
+		.bind(imageId, Number(width || 0), Number(height || 0), nowIso())
+		.run();
+
+	return Number(result?.meta?.changes || 0) > 0;
+}
+
+export async function getImageForDelete(db, imageId) {
+	return db
+		.prepare(
+			`SELECT image_id, object_id, object_key, thumb_object_key, status, created_at, updated_at
+       FROM images
+       WHERE image_id = ?1`
+		)
+		.bind(imageId)
+		.first();
+}
+
+export async function softDeleteImage(db, imageId) {
+	const timestamp = nowIso();
+	const result = await db
+		.prepare(
+			`UPDATE images
+       SET status = 'deleted',
+           updated_at = ?2
+       WHERE image_id = ?1
+         AND status = 'active'`
+		)
+		.bind(imageId, timestamp)
+		.run();
+
+	return Number(result?.meta?.changes || 0) > 0;
+}
+
 export async function getLatestImageByObjectKey(db, objectKey) {
 	return db
 		.prepare(
@@ -192,6 +270,24 @@ export async function getImageObjectById(db, objectId) {
 		)
 		.bind(objectId)
 		.first();
+}
+
+export async function decrementObjectRefCount(db, objectId) {
+	if (!objectId) return null;
+	await db
+		.prepare(
+			`UPDATE image_objects
+       SET ref_count = CASE
+         WHEN ref_count > 0 THEN ref_count - 1
+         ELSE 0
+       END,
+       updated_at = ?2
+       WHERE object_id = ?1`
+		)
+		.bind(objectId, nowIso())
+		.run();
+
+	return getImageObjectById(db, objectId);
 }
 
 export async function createOrReuseImageObject(db, payload) {
