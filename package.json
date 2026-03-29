@@ -7,6 +7,7 @@
     "dev": "wrangler pages dev public",
     "deploy": "wrangler pages deploy public --project-name cyrene-picture-cloudflare",
     "test": "node --experimental-specifier-resolution=node --test tests/**/*.test.js",
+    "debug:upload:session": "node scripts/debug-upload-session.mjs",
     "db:migrate:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/schema.sql",
     "db:migrate:v2:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/migrate-v2-uploader-nickname.sql",
     "db:migrate:v2:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v2-uploader-nickname.sql",

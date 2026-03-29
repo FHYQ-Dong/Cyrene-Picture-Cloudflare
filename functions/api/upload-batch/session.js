@@ -33,9 +33,27 @@ export async function onRequestPost(context) {
 				identity.ip
 			);
 			if (!turnstileResult.ok) {
+				if (turnstileResult.reason === "missing-secret") {
+					return jsonError(
+						ErrorCode.ConfigMissing,
+						"missing TURNSTILE_SECRET_KEY",
+						500,
+						{ required: ["TURNSTILE_SECRET_KEY"] }
+					);
+				}
+
+				const errorCodes = Array.isArray(
+					turnstileResult?.details?.["error-codes"]
+				)
+					? turnstileResult.details["error-codes"]
+					: [];
+				const reasonText = errorCodes.length
+					? errorCodes.join(",")
+					: String(turnstileResult.reason || "unknown");
+
 				return jsonError(
 					ErrorCode.TurnstileInvalid,
-					"turnstile verification failed",
+					`turnstile verification failed (${reasonText})`,
 					403,
 					turnstileResult.details || turnstileResult.reason
 				);

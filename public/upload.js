@@ -374,6 +374,29 @@ async function createBatchUploadSession(batchId, token) {
 	return response.json();
 }
 
+function formatSessionErrorMessage(sessionPayload) {
+	const code = String(sessionPayload?.error?.code || "");
+	const baseMessage =
+		sessionPayload?.error?.message || "创建批次验证会话失败";
+	const details = sessionPayload?.error?.details;
+	if (code !== "TURNSTILE_INVALID") {
+		return baseMessage;
+	}
+
+	const errorCodes = Array.isArray(details?.["error-codes"])
+		? details["error-codes"]
+		: [];
+	if (errorCodes.length) {
+		return `${baseMessage} [${errorCodes.join(",")}]`;
+	}
+
+	if (typeof details === "string" && details) {
+		return `${baseMessage} [${details}]`;
+	}
+
+	return baseMessage;
+}
+
 async function acquireBatchSessionToken(batchId, { refresh = false } = {}) {
 	const attemptCreateSession = async (forceRefresh) => {
 		const token = await getTurnstileTokenForBatch({
@@ -390,8 +413,7 @@ async function acquireBatchSessionToken(batchId, { refresh = false } = {}) {
 	}
 
 	if (!sessionPayload?.ok) {
-		const message =
-			sessionPayload?.error?.message || "创建批次验证会话失败";
+		const message = formatSessionErrorMessage(sessionPayload);
 		throw new Error(message);
 	}
 
@@ -538,6 +560,7 @@ async function processUploadChunk(params) {
 
 	let preparedItems = [];
 	let rejectedByPrepare = [];
+	let rotatedBatchSessionToken = batchSessionToken;
 	if (missItems.length) {
 		const preparePayload = await prepareBatchUpload(
 			batchId,
@@ -570,6 +593,10 @@ async function processUploadChunk(params) {
 				retryableSessionError: false,
 			};
 		}
+
+		rotatedBatchSessionToken =
+			String(preparePayload?.data?.nextBatchSessionToken || "").trim() ||
+			batchSessionToken;
 
 		preparedItems = preparePayload.data.items || [];
 		rejectedByPrepare = preparePayload.data.rejectedItems || [];
@@ -666,7 +693,10 @@ async function processUploadChunk(params) {
 	}
 
 	if (!completeItems.length) {
-		return { ok: true };
+		return {
+			ok: true,
+			batchSessionToken: rotatedBatchSessionToken,
+		};
 	}
 
 	const completePayload = await completeBatchUpload(batchId, completeItems);
@@ -709,7 +739,10 @@ async function processUploadChunk(params) {
 		});
 	}
 
-	return { ok: true };
+	return {
+		ok: true,
+		batchSessionToken: rotatedBatchSessionToken,
+	};
 }
 
 uploadButton.addEventListener("click", async () => {
@@ -810,6 +843,10 @@ uploadButton.addEventListener("click", async () => {
 					batchId,
 					batchSessionToken,
 				});
+			}
+
+			if (chunkResult?.batchSessionToken) {
+				batchSessionToken = chunkResult.batchSessionToken;
 			}
 
 			if (!chunkResult?.ok && !chunkResult?.retryableSessionError) {

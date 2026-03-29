@@ -9,7 +9,10 @@ import { createPresignedPutUrl } from "../../_shared/r2-presign.js";
 import { normalizeUploaderNickname } from "../../_shared/nickname.js";
 import { issueUploadToken } from "../../_shared/upload-token.js";
 import { createUploadTokenRecord } from "../../_shared/db.js";
-import { verifyBatchSessionToken } from "../../_shared/upload-batch-session.js";
+import {
+	issueBatchSessionToken,
+	verifyBatchSessionToken,
+} from "../../_shared/upload-batch-session.js";
 
 const MAX_BATCH_ITEMS = 20;
 
@@ -49,6 +52,8 @@ export async function onRequestPost(context) {
 		}
 
 		const identity = await getIdentity(request);
+		let nextBatchSessionToken = "";
+		let nextBatchSessionExpiresAt = "";
 		if (batchSessionToken) {
 			const verified = await verifyBatchSessionToken(
 				config,
@@ -113,6 +118,16 @@ export async function onRequestPost(context) {
 					turnstileResult.details || turnstileResult.reason
 				);
 			}
+		}
+
+		if (config.uploadBatchSessionSecret) {
+			const issuedSession = await issueBatchSessionToken(config, {
+				batchId,
+				visitorId: identity.visitorId,
+				ipHash: identity.ipHash,
+			});
+			nextBatchSessionToken = issuedSession.token;
+			nextBatchSessionExpiresAt = issuedSession.expiresAt;
 		}
 
 		const acceptedItems = [];
@@ -268,6 +283,8 @@ export async function onRequestPost(context) {
 
 		return jsonOk({
 			batchId,
+			nextBatchSessionToken,
+			nextBatchSessionExpiresAt,
 			items: acceptedItems,
 			acceptedCount: acceptedItems.length,
 			rejectedCount: rejectedItems.length,
