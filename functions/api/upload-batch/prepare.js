@@ -9,12 +9,13 @@ import { createPresignedPutUrl } from "../../_shared/r2-presign.js";
 import { normalizeUploaderNickname } from "../../_shared/nickname.js";
 import { issueUploadToken } from "../../_shared/upload-token.js";
 import { createUploadTokenRecord } from "../../_shared/db.js";
+import { verifyBatchSessionToken } from "../../_shared/upload-batch-session.js";
 
 const MAX_BATCH_ITEMS = 20;
 
 function parseItems(rawItems) {
 	if (!Array.isArray(rawItems)) return [];
-	return rawItems.slice(0, MAX_BATCH_ITEMS).map((item, index) => ({
+	return rawItems.map((item, index) => ({
 		clientFileId: String(item?.clientFileId || `item-${index}`),
 		filename: String(item?.filename || item?.fileName || "").trim(),
 		mime: String(item?.mime || "").toLowerCase(),
@@ -30,16 +31,78 @@ export async function onRequestPost(context) {
 	try {
 		const body = await request.json().catch(() => null);
 		const batchId = String(body?.batchId || crypto.randomUUID());
+		const batchSessionToken = String(body?.batchSessionToken || "").trim();
 		const items = parseItems(body?.items);
 		if (!items.length) {
 			return jsonError(ErrorCode.InvalidRequest, "invalid items", 400);
 		}
+		if (items.length > MAX_BATCH_ITEMS) {
+			return jsonError(
+				ErrorCode.BatchLimitExceeded,
+				"batch items exceeded",
+				400,
+				{
+					maxItems: MAX_BATCH_ITEMS,
+					receivedItems: items.length,
+				}
+			);
+		}
 
 		const identity = await getIdentity(request);
-		if (config.turnstileEnforced) {
+		if (batchSessionToken) {
+			const verified = await verifyBatchSessionToken(
+				config,
+				batchSessionToken
+			);
+			if (!verified.ok) {
+				if (verified.reason === "UPLOAD_BATCH_SESSION_EXPIRED") {
+					return jsonError(
+						ErrorCode.UploadBatchSessionExpired,
+						"batch session expired",
+						403
+					);
+				}
+				if (verified.reason === "UPLOAD_BATCH_SESSION_SECRET_MISSING") {
+					return jsonError(
+						ErrorCode.ConfigMissing,
+						"missing UPLOAD_BATCH_SESSION_SECRET",
+						500,
+						{ required: ["UPLOAD_BATCH_SESSION_SECRET"] }
+					);
+				}
+				return jsonError(
+					ErrorCode.UploadBatchSessionInvalid,
+					"invalid batch session token",
+					403
+				);
+			}
+
+			const tokenPayload = verified.payload || {};
+			if (
+				tokenPayload.batchId !== batchId ||
+				tokenPayload.visitorId !== identity.visitorId ||
+				tokenPayload.ipHash !== identity.ipHash
+			) {
+				return jsonError(
+					ErrorCode.UploadBatchSessionInvalid,
+					"batch session binding mismatch",
+					403
+				);
+			}
+		} else if (config.turnstileEnforced) {
+			const legacyTurnstileToken = String(
+				body?.turnstileToken || ""
+			).trim();
+			if (!legacyTurnstileToken) {
+				return jsonError(
+					ErrorCode.UploadBatchSessionMissing,
+					"missing batchSessionToken",
+					403
+				);
+			}
 			const turnstileResult = await verifyTurnstile(
 				env,
-				body?.turnstileToken,
+				legacyTurnstileToken,
 				identity.ip
 			);
 			if (!turnstileResult.ok) {

@@ -4,8 +4,11 @@ import {
 	createOrReuseImageObject,
 	consumeUploadTokenRecord,
 	createUploadEvent,
+	getImageObjectByHash,
 	getImageObjectById,
+	getLatestActiveImageByHashAndUploader,
 	getLatestImageByObjectKey,
+	touchImageUploadTime,
 	upsertImageMetadata,
 } from "../_shared/db.js";
 import { writeLog } from "../_shared/log.js";
@@ -68,6 +71,7 @@ export async function onRequestPost(context) {
 		let uploadMode = "normal";
 		let dedupHit = false;
 		let imageObject = null;
+		let existingImageForUploader = null;
 
 		if (requestedObjectId) {
 			const dedupObject = await getImageObjectById(
@@ -86,14 +90,7 @@ export async function onRequestPost(context) {
 			contentHash = dedupObject.content_hash;
 			uploadMode = "instant";
 			dedupHit = true;
-			imageObject = await createOrReuseImageObject(env.DB, {
-				objectId: crypto.randomUUID(),
-				contentHash,
-				objectKey,
-				mime: dedupObject.mime,
-				size: Number(dedupObject.size_bytes || body.size),
-				etag: dedupObject.r2_etag,
-			});
+			imageObject = dedupObject;
 		} else {
 			if (!objectKey) {
 				return jsonError(
@@ -194,7 +191,83 @@ export async function onRequestPost(context) {
 					500
 				);
 			}
+		}
 
+		existingImageForUploader = await getLatestActiveImageByHashAndUploader(
+			env.DB,
+			contentHash,
+			normalizedNickname.nickname
+		);
+
+		if (existingImageForUploader) {
+			uploadMode = "instant";
+			dedupHit = true;
+			if (!requestedObjectId) {
+				const existingObject = await getImageObjectByHash(
+					env.DB,
+					contentHash
+				);
+				if (
+					existingObject?.object_key &&
+					existingObject.object_key !== objectKey
+				) {
+					await env.R2.delete(body.objectKey).catch(() => null);
+				}
+			}
+
+			await touchImageUploadTime(
+				env.DB,
+				existingImageForUploader.image_id
+			);
+
+			const reusedPublicUrl =
+				existingImageForUploader.public_url ||
+				resolveImageUrl(config, existingImageForUploader.object_key);
+
+			writeLog("info", {
+				request_id: requestId,
+				route: "POST /api/upload-complete",
+				status_code: 200,
+				image_id: existingImageForUploader.image_id,
+				bytes_in: Number(
+					existingImageForUploader.size_bytes || body.size || 0
+				),
+				upload_mode: "reuse_existing",
+				dedup_hit: true,
+				content_hash: contentHash,
+				error_code: null,
+			});
+
+			return jsonOk({
+				requestId,
+				imageId: existingImageForUploader.image_id,
+				objectId: existingImageForUploader.object_id,
+				uploadEventId: existingImageForUploader.upload_event_id,
+				contentHash,
+				uploadMode: "reuse_existing",
+				dedupHit: true,
+				publicUrl: reusedPublicUrl,
+				thumbUrl:
+					existingImageForUploader.thumb_status === "ready"
+						? existingImageForUploader.thumb_public_url
+						: null,
+				uploaderNickname: normalizedNickname.nickname,
+				status: "active",
+				reusedExistingImage: true,
+			});
+		}
+
+		if (requestedObjectId) {
+			const dedupObject = imageObject;
+			imageObject = await createOrReuseImageObject(env.DB, {
+				objectId: crypto.randomUUID(),
+				contentHash,
+				objectKey,
+				mime: dedupObject.mime,
+				size: Number(dedupObject.size_bytes || body.size),
+				etag: dedupObject.r2_etag,
+			});
+		} else {
 			imageObject = await createOrReuseImageObject(env.DB, {
 				objectId: crypto.randomUUID(),
 				contentHash,
@@ -218,6 +291,14 @@ export async function onRequestPost(context) {
 				objectKey = imageObject.object_key;
 				await env.R2.delete(body.objectKey).catch(() => null);
 			}
+		}
+
+		if (!imageObject) {
+			return jsonError(
+				ErrorCode.InternalError,
+				"failed to save image object",
+				500
+			);
 		}
 
 		await createUploadEvent(env.DB, {

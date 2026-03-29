@@ -23,6 +23,7 @@ const STAGE_META = {
 
 const progressStore = new Map();
 const progressElementStore = new Map();
+const MAX_BATCH_ITEMS = 20;
 
 function setSummary(text, state = "pending") {
 	uploadSummary.textContent = text;
@@ -169,6 +170,48 @@ function initProgressItems(items) {
 	refreshProgressStats();
 }
 
+function isTerminalStage(stage) {
+	return stage === "success" || stage === "failed" || stage === "canceled";
+}
+
+function chunkItems(items, chunkSize = MAX_BATCH_ITEMS) {
+	const chunks = [];
+	for (let index = 0; index < items.length; index += chunkSize) {
+		chunks.push(items.slice(index, index + chunkSize));
+	}
+	return chunks;
+}
+
+function summarizeProgress() {
+	const entries = Array.from(progressStore.values());
+	const total = entries.length;
+	const successCount = entries.filter(
+		(item) => item.stage === "success"
+	).length;
+	const failedCount = entries.filter(
+		(item) => item.stage === "failed"
+	).length;
+	const pendingCount = entries.filter(
+		(item) => !isTerminalStage(item.stage)
+	).length;
+	return {
+		total,
+		successCount,
+		failedCount,
+		pendingCount,
+	};
+}
+
+function forceSetPendingToFailed(message) {
+	for (const entry of progressStore.values()) {
+		if (isTerminalStage(entry.stage)) continue;
+		upsertProgress(entry.clientFileId, {
+			stage: "failed",
+			message,
+		});
+	}
+}
+
 function setUploading(isUploading) {
 	uploadButton.disabled = isUploading;
 	uploadButton.textContent = isUploading ? "上传中..." : "批量上传";
@@ -177,6 +220,44 @@ function setUploading(isUploading) {
 let turnstileToken = "";
 let turnstileWidgetId = null;
 let turnstileSiteKey = "";
+let activeBatchSession = null;
+
+function resetTurnstileWidget() {
+	turnstileToken = "";
+	if (window.turnstile && turnstileWidgetId != null) {
+		window.turnstile.reset(turnstileWidgetId);
+	}
+}
+
+async function waitForTurnstileToken(timeoutMs = 120000) {
+	const startedAt = Date.now();
+	while (Date.now() - startedAt < timeoutMs) {
+		if (turnstileToken) return turnstileToken;
+		await new Promise((resolve) => setTimeout(resolve, 150));
+	}
+	return "";
+}
+
+async function getTurnstileTokenForBatch({ refresh = false } = {}) {
+	if (refresh) {
+		resetTurnstileWidget();
+	}
+
+	if (turnstileToken) {
+		const token = turnstileToken;
+		turnstileToken = "";
+		return token;
+	}
+
+	turnstileStatus.textContent = "请完成人机验证以继续上传";
+	const token = await waitForTurnstileToken();
+	if (!token) {
+		throw new Error("人机验证超时，请重新验证后重试");
+	}
+	turnstileStatus.textContent = "";
+	turnstileToken = "";
+	return token;
+}
 
 async function loadClientConfig() {
 	try {
@@ -268,7 +349,7 @@ async function prepareBatchUpload(batchId, items, turnstileToken) {
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify({
 			batchId,
-			turnstileToken,
+			batchSessionToken: turnstileToken,
 			items: items.map((item) => ({
 				clientFileId: item.clientFileId,
 				filename: item.file.name,
@@ -279,6 +360,52 @@ async function prepareBatchUpload(batchId, items, turnstileToken) {
 		}),
 	});
 	return response.json();
+}
+
+async function createBatchUploadSession(batchId, token) {
+	const response = await fetch("/api/upload-batch/session", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			batchId,
+			turnstileToken: token,
+		}),
+	});
+	return response.json();
+}
+
+async function acquireBatchSessionToken(batchId, { refresh = false } = {}) {
+	const attemptCreateSession = async (forceRefresh) => {
+		const token = await getTurnstileTokenForBatch({
+			refresh: forceRefresh,
+		});
+		return createBatchUploadSession(batchId, token);
+	};
+
+	let sessionPayload = await attemptCreateSession(refresh);
+	const errorCode = String(sessionPayload?.error?.code || "");
+	if (!sessionPayload?.ok && errorCode === "TURNSTILE_INVALID") {
+		turnstileStatus.textContent = "人机验证已失效，正在重新验证...";
+		sessionPayload = await attemptCreateSession(true);
+	}
+
+	if (!sessionPayload?.ok) {
+		const message =
+			sessionPayload?.error?.message || "创建批次验证会话失败";
+		throw new Error(message);
+	}
+
+	activeBatchSession = {
+		token: String(sessionPayload.data?.batchSessionToken || "").trim(),
+		expiresAt: String(sessionPayload.data?.expiresAt || ""),
+	};
+
+	if (!activeBatchSession.token) {
+		throw new Error("批次验证会话为空");
+	}
+
+	turnstileStatus.textContent = "";
+	return activeBatchSession.token;
 }
 
 async function completeBatchUpload(batchId, items) {
@@ -374,6 +501,217 @@ async function runWithConcurrency(tasks, limit = 2) {
 	return results;
 }
 
+async function processUploadChunk(params) {
+	const {
+		chunk,
+		chunkIndex,
+		chunkCount,
+		hashResultMap,
+		uploaderNickname,
+		batchId,
+		batchSessionToken,
+	} = params;
+
+	const hitItems = [];
+	const missItems = [];
+
+	for (const item of chunk) {
+		const result = hashResultMap.get(item.clientFileId);
+		if (result?.exists && result?.objectId) {
+			hitItems.push({
+				...item,
+				result,
+			});
+			upsertProgress(item.clientFileId, {
+				stage: "instant-ready",
+				message: `秒传命中（分片 ${chunkIndex}/${chunkCount}）`,
+			});
+			continue;
+		}
+
+		missItems.push(item);
+		upsertProgress(item.clientFileId, {
+			stage: "preparing",
+			message: `申请上传地址（分片 ${chunkIndex}/${chunkCount}）`,
+		});
+	}
+
+	let preparedItems = [];
+	let rejectedByPrepare = [];
+	if (missItems.length) {
+		const preparePayload = await prepareBatchUpload(
+			batchId,
+			missItems,
+			batchSessionToken
+		);
+		if (!preparePayload.ok) {
+			const errorCode = String(preparePayload?.error?.code || "");
+			const retryableSessionError =
+				errorCode === "UPLOAD_BATCH_SESSION_EXPIRED" ||
+				errorCode === "UPLOAD_BATCH_SESSION_INVALID" ||
+				errorCode === "UPLOAD_BATCH_SESSION_MISSING";
+			if (retryableSessionError) {
+				return {
+					ok: false,
+					errorCode,
+					retryableSessionError: true,
+				};
+			}
+			for (const item of missItems) {
+				upsertProgress(item.clientFileId, {
+					stage: "failed",
+					message:
+						preparePayload?.error?.message || "申请上传地址失败",
+				});
+			}
+			return {
+				ok: false,
+				errorCode,
+				retryableSessionError: false,
+			};
+		}
+
+		preparedItems = preparePayload.data.items || [];
+		rejectedByPrepare = preparePayload.data.rejectedItems || [];
+
+		for (const rejected of rejectedByPrepare) {
+			upsertProgress(rejected.clientFileId, {
+				stage: "failed",
+				message: rejected.message || "上传准备被拒绝",
+			});
+		}
+	}
+
+	const preparedMap = new Map(
+		preparedItems.map((item) => [item.clientFileId, item])
+	);
+	const uploadTasks = missItems
+		.filter((item) => preparedMap.has(item.clientFileId))
+		.map((item) => async () => {
+			const prepared = preparedMap.get(item.clientFileId);
+			upsertProgress(item.clientFileId, {
+				stage: "uploading",
+				message: `文件上传中（分片 ${chunkIndex}/${chunkCount}）`,
+			});
+			try {
+				const etag = await uploadFile(
+					prepared.uploadUrl,
+					item.file,
+					prepared.requiredHeaders || {
+						"content-type": item.file.type,
+					}
+				);
+				upsertProgress(item.clientFileId, {
+					stage: "finalizing",
+					message: `上传完成，写入记录（分片 ${chunkIndex}/${chunkCount}）`,
+				});
+				return {
+					clientFileId: item.clientFileId,
+					ok: true,
+					etag,
+					prepared,
+					item,
+				};
+			} catch (error) {
+				upsertProgress(item.clientFileId, {
+					stage: "failed",
+					message: String(error),
+				});
+				return {
+					clientFileId: item.clientFileId,
+					ok: false,
+					error: String(error),
+				};
+			}
+		});
+
+	const uploadResults = await runWithConcurrency(uploadTasks, 2);
+
+	const completeItems = [];
+	for (const item of hitItems) {
+		completeItems.push({
+			clientFileId: item.clientFileId,
+			dedupHit: true,
+			dedupObjectId: item.result.objectId,
+			contentHash: item.contentHash,
+			mime: item.file.type,
+			size: item.file.size,
+			width: item.width,
+			height: item.height,
+			uploaderNickname,
+			originalFilename: item.file.name,
+		});
+		upsertProgress(item.clientFileId, {
+			stage: "finalizing",
+			message: `秒传命中，写入记录（分片 ${chunkIndex}/${chunkCount}）`,
+		});
+	}
+
+	for (const result of uploadResults) {
+		if (!result?.ok) continue;
+		completeItems.push({
+			clientFileId: result.clientFileId,
+			dedupHit: false,
+			contentHash: result.item.contentHash,
+			uploadToken: result.prepared.uploadToken,
+			objectKey: result.prepared.objectKey,
+			mime: result.item.file.type,
+			size: result.item.file.size,
+			width: result.item.width,
+			height: result.item.height,
+			etag: result.etag,
+			uploaderNickname,
+			originalFilename: result.item.file.name,
+		});
+	}
+
+	if (!completeItems.length) {
+		return { ok: true };
+	}
+
+	const completePayload = await completeBatchUpload(batchId, completeItems);
+	if (!completePayload.ok) {
+		for (const item of completeItems) {
+			upsertProgress(item.clientFileId, {
+				stage: "failed",
+				message: completePayload?.error?.message || "写入元数据失败",
+			});
+		}
+		return {
+			ok: false,
+			errorCode: String(completePayload?.error?.code || ""),
+			retryableSessionError: false,
+		};
+	}
+
+	const completeResults = completePayload.data.results || [];
+	const completedClientIds = new Set();
+	for (const result of completeResults) {
+		completedClientIds.add(result.clientFileId);
+		if (result.ok) {
+			upsertProgress(result.clientFileId, {
+				stage: "success",
+				message: result.dedup_hit ? "秒传完成" : "上传完成",
+			});
+			continue;
+		}
+		upsertProgress(result.clientFileId, {
+			stage: "failed",
+			message: result.message || result.errorCode || "处理失败",
+		});
+	}
+
+	for (const item of completeItems) {
+		if (completedClientIds.has(item.clientFileId)) continue;
+		upsertProgress(item.clientFileId, {
+			stage: "failed",
+			message: "结果缺失，已标记失败",
+		});
+	}
+
+	return { ok: true };
+}
+
 uploadButton.addEventListener("click", async () => {
 	const files = Array.from(fileInput.files || []);
 	if (!files.length) {
@@ -381,13 +719,9 @@ uploadButton.addEventListener("click", async () => {
 		return;
 	}
 
-	if (!turnstileToken) {
-		setSummary("请先完成人机验证", "error");
-		return;
-	}
-
 	try {
 		setUploading(true);
+		activeBatchSession = null;
 		const batchId = crypto.randomUUID();
 		const uploaderNickname = getNicknameValue();
 		setSummary(`开始处理 ${files.length} 个文件...`, "pending");
@@ -438,205 +772,68 @@ uploadButton.addEventListener("click", async () => {
 			])
 		);
 
-		const hitItems = [];
-		const missItems = [];
-		for (const item of batchItems) {
-			const result = hashResultMap.get(item.clientFileId);
-			if (result?.exists && result?.objectId) {
-				hitItems.push({
-					...item,
-					result,
-				});
-				upsertProgress(item.clientFileId, {
-					stage: "instant-ready",
-					message: "秒传命中，等待写入",
-				});
-			} else {
-				missItems.push(item);
-				upsertProgress(item.clientFileId, {
-					stage: "preparing",
-					message: "申请上传地址",
-				});
-			}
-		}
+		setSummary("创建批次验证会话...", "pending");
+		let batchSessionToken = await acquireBatchSessionToken(batchId, {
+			refresh: false,
+		});
 
-		let preparedItems = [];
-		let rejectedByPrepare = [];
-		if (missItems.length) {
-			setSummary("申请批量上传地址...", "pending");
-			const preparePayload = await prepareBatchUpload(
-				batchId,
-				missItems,
-				turnstileToken
+		const chunks = chunkItems(batchItems, MAX_BATCH_ITEMS);
+		for (let index = 0; index < chunks.length; index += 1) {
+			const chunk = chunks[index];
+			setSummary(
+				`处理中：分片 ${index + 1}/${chunks.length}（${
+					chunk.length
+				} 项）`,
+				"pending"
 			);
-			if (!preparePayload.ok) {
-				for (const item of missItems) {
-					upsertProgress(item.clientFileId, {
-						stage: "failed",
-						message: "申请上传地址失败",
-					});
-				}
-				setSummary("申请上传地址失败，请稍后重试", "error");
-				return;
-			}
-			preparedItems = preparePayload.data.items || [];
-			rejectedByPrepare = preparePayload.data.rejectedItems || [];
-
-			for (const rejected of rejectedByPrepare) {
-				upsertProgress(rejected.clientFileId, {
-					stage: "failed",
-					message: rejected.message || "上传准备被拒绝",
-				});
-			}
-		}
-
-		const preparedMap = new Map(
-			preparedItems.map((item) => [item.clientFileId, item])
-		);
-		const uploadTasks = missItems
-			.filter((item) => preparedMap.has(item.clientFileId))
-			.map((item) => async () => {
-				const prepared = preparedMap.get(item.clientFileId);
-				upsertProgress(item.clientFileId, {
-					stage: "uploading",
-					message: "文件上传中",
-				});
-				try {
-					const etag = await uploadFile(
-						prepared.uploadUrl,
-						item.file,
-						prepared.requiredHeaders || {
-							"content-type": item.file.type,
-						}
-					);
-					upsertProgress(item.clientFileId, {
-						stage: "finalizing",
-						message: "上传完成，写入记录",
-					});
-					return {
-						clientFileId: item.clientFileId,
-						ok: true,
-						etag,
-						prepared,
-						item,
-					};
-				} catch (error) {
-					upsertProgress(item.clientFileId, {
-						stage: "failed",
-						message: String(error),
-					});
-					return {
-						clientFileId: item.clientFileId,
-						ok: false,
-						error: String(error),
-					};
-				}
-			});
-
-		if (uploadTasks.length) {
-			setSummary("上传未命中的文件...", "pending");
-		}
-		const uploadResults = await runWithConcurrency(uploadTasks, 2);
-
-		const completeItems = [];
-		for (const item of hitItems) {
-			completeItems.push({
-				clientFileId: item.clientFileId,
-				dedupHit: true,
-				dedupObjectId: item.result.objectId,
-				contentHash: item.contentHash,
-				mime: item.file.type,
-				size: item.file.size,
-				width: item.width,
-				height: item.height,
+			let chunkResult = await processUploadChunk({
+				chunk,
+				chunkIndex: index + 1,
+				chunkCount: chunks.length,
+				hashResultMap,
 				uploaderNickname,
-				originalFilename: item.file.name,
-			});
-		}
-
-		for (const result of uploadResults) {
-			if (!result?.ok) continue;
-			completeItems.push({
-				clientFileId: result.clientFileId,
-				dedupHit: false,
-				contentHash: result.item.contentHash,
-				uploadToken: result.prepared.uploadToken,
-				objectKey: result.prepared.objectKey,
-				mime: result.item.file.type,
-				size: result.item.file.size,
-				width: result.item.width,
-				height: result.item.height,
-				etag: result.etag,
-				uploaderNickname,
-				originalFilename: result.item.file.name,
-			});
-		}
-
-		for (const item of hitItems) {
-			upsertProgress(item.clientFileId, {
-				stage: "finalizing",
-				message: "秒传命中，写入记录",
-			});
-		}
-
-		let successCount = 0;
-		let failedCount = rejectedByPrepare.length;
-		const failedUploads = uploadResults.filter((item) => !item.ok);
-
-		if (completeItems.length) {
-			setSummary("批量写入元数据...", "pending");
-			const completePayload = await completeBatchUpload(
 				batchId,
-				completeItems
-			);
-			if (!completePayload.ok) {
-				for (const item of completeItems) {
-					upsertProgress(item.clientFileId, {
-						stage: "failed",
-						message: "写入元数据失败",
-					});
-				}
-				setSummary("写入元数据失败，请稍后重试", "error");
-				return;
-			}
+				batchSessionToken,
+			});
 
-			const completeResults = completePayload.data.results || [];
-			for (const result of completeResults) {
-				if (result.ok) {
-					upsertProgress(result.clientFileId, {
-						stage: "success",
-						message: result.dedup_hit ? "秒传完成" : "上传完成",
-					});
-					continue;
-				}
-				upsertProgress(result.clientFileId, {
-					stage: "failed",
-					message: result.message || result.errorCode || "处理失败",
+			if (chunkResult?.retryableSessionError) {
+				setSummary("批次验证已过期，正在重新验证...", "pending");
+				batchSessionToken = await acquireBatchSessionToken(batchId, {
+					refresh: true,
+				});
+				chunkResult = await processUploadChunk({
+					chunk,
+					chunkIndex: index + 1,
+					chunkCount: chunks.length,
+					hashResultMap,
+					uploaderNickname,
+					batchId,
+					batchSessionToken,
 				});
 			}
 
-			successCount = completePayload.data.successCount || 0;
-			failedCount += completePayload.data.failedCount || 0;
+			if (!chunkResult?.ok && !chunkResult?.retryableSessionError) {
+				continue;
+			}
 		}
 
-		failedCount += failedUploads.length;
+		forceSetPendingToFailed("批次异常收敛：未完成项已标记失败");
+		const summary = summarizeProgress();
 		setSummary(
-			`上传完成：成功 ${successCount}，失败 ${failedCount}，秒传命中 ${hitItems.length}`,
-			failedCount ? "error" : "success"
+			`上传完成：成功 ${summary.successCount}，失败 ${summary.failedCount}`,
+			summary.failedCount > 0 ? "error" : "success"
 		);
 
 		if (!uploaderNicknameInput.value.trim()) {
 			uploaderNicknameInput.placeholder = `已使用默认昵称：${siteConfig.defaultUploaderNickname}`;
 		}
 
-		turnstileToken = "";
-		if (window.turnstile && turnstileWidgetId != null) {
-			window.turnstile.reset(turnstileWidgetId);
-			turnstileStatus.textContent = "";
-		}
+		resetTurnstileWidget();
+		turnstileStatus.textContent = "";
 	} catch (error) {
 		setSummary(`上传失败：${String(error)}`, "error");
 	} finally {
+		activeBatchSession = null;
 		setUploading(false);
 	}
 });

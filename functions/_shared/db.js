@@ -250,6 +250,41 @@ export async function getLatestImageByObjectKey(db, objectKey) {
 		.first();
 }
 
+export async function getLatestActiveImageByHashAndUploader(
+	db,
+	contentHash,
+	uploaderNickname
+) {
+	return db
+		.prepare(
+			`SELECT image_id, object_id, upload_event_id, content_hash, upload_mode, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, mime, size_bytes, uploader_nickname, width, height, created_at, status
+       FROM images
+       WHERE status = 'active'
+         AND content_hash = ?1
+         AND uploader_nickname = ?2
+       ORDER BY created_at DESC
+       LIMIT 1`
+		)
+		.bind(contentHash, uploaderNickname)
+		.first();
+}
+
+export async function touchImageUploadTime(db, imageId) {
+	const timestamp = nowIso();
+	const result = await db
+		.prepare(
+			`UPDATE images
+       SET created_at = ?2,
+           updated_at = ?2
+       WHERE image_id = ?1
+         AND status = 'active'`
+		)
+		.bind(imageId, timestamp)
+		.run();
+
+	return Number(result?.meta?.changes || 0) > 0;
+}
+
 export async function getImageObjectByHash(db, contentHash) {
 	return db
 		.prepare(

@@ -5,7 +5,7 @@ const MAX_BATCH_ITEMS = 20;
 
 function normalizeItems(rawItems) {
 	if (!Array.isArray(rawItems)) return [];
-	return rawItems.slice(0, MAX_BATCH_ITEMS).map((item, index) => ({
+	return rawItems.map((item, index) => ({
 		clientFileId: String(item?.clientFileId || `item-${index}`),
 		dedupHit: Boolean(item?.dedupHit),
 		dedupObjectId: String(item?.dedupObjectId || "").trim(),
@@ -32,6 +32,17 @@ export async function onRequestPost(context) {
 		const items = normalizeItems(body?.items);
 		if (!items.length) {
 			return jsonError(ErrorCode.InvalidRequest, "invalid items", 400);
+		}
+		if (items.length > MAX_BATCH_ITEMS) {
+			return jsonError(
+				ErrorCode.BatchLimitExceeded,
+				"batch items exceeded",
+				400,
+				{
+					maxItems: MAX_BATCH_ITEMS,
+					receivedItems: items.length,
+				}
+			);
 		}
 
 		const results = [];
@@ -86,6 +97,10 @@ export async function onRequestPost(context) {
 				clientFileId: item.clientFileId,
 				ok: true,
 				...singlePayload.data,
+				dedup_hit: Boolean(
+					singlePayload?.data?.dedup_hit ??
+						singlePayload?.data?.dedupHit
+				),
 			});
 		}
 
