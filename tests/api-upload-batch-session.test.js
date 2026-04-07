@@ -87,6 +87,7 @@ test("upload-batch/prepare rejects expired batch session token", async () => {
 		TURNSTILE_ENFORCED: "false",
 		UPLOAD_BATCH_SESSION_SECRET: "test-batch-session-secret",
 		UPLOAD_BATCH_SESSION_TTL_SECONDS: "1",
+		UPLOAD_BATCH_SESSION_REFRESH_GRACE_SECONDS: "0",
 	});
 	const config = getConfig(env);
 
@@ -209,4 +210,48 @@ test("upload-batch/prepare returns renewed batch session token", async () => {
 	assert.equal(verified.payload.batchId, "batch-session-rolling");
 	assert.equal(verified.payload.visitorId, identity.visitorId);
 	assert.equal(verified.payload.ipHash, identity.ipHash);
+});
+
+test("upload-batch/prepare allows expired token within grace window", async () => {
+	const { env } = createMockContextEnv({
+		TURNSTILE_ENFORCED: "false",
+		UPLOAD_BATCH_SESSION_SECRET: "test-batch-session-secret",
+		UPLOAD_BATCH_SESSION_TTL_SECONDS: "1",
+		UPLOAD_BATCH_SESSION_REFRESH_GRACE_SECONDS: "10",
+	});
+	const config = getConfig(env);
+
+	const identityRequest = new Request("https://example.com/identity", {
+		headers: {
+			"cf-connecting-ip": "203.0.113.8",
+			"user-agent": "session-test-agent",
+		},
+	});
+	const identity = await getIdentity(identityRequest);
+
+	const issued = await issueBatchSessionToken(config, {
+		batchId: "batch-session-grace",
+		visitorId: identity.visitorId,
+		ipHash: identity.ipHash,
+	});
+
+	const originalNow = Date.now;
+	Date.now = () => originalNow() + 3000;
+	try {
+		const request = createPrepareRequest({
+			batchId: "batch-session-grace",
+			batchSessionToken: issued.token,
+			ip: "203.0.113.8",
+			userAgent: "session-test-agent",
+		});
+
+		const response = await prepareBatchUpload({ request, env });
+		const payload = await response.json();
+
+		assert.equal(response.status, 200);
+		assert.equal(payload.ok, true);
+		assert.ok(payload.data.nextBatchSessionToken);
+	} finally {
+		Date.now = originalNow;
+	}
 });

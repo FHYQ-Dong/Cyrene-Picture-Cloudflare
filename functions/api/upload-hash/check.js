@@ -5,7 +5,7 @@ import { getImageObjectByHash } from "../../_shared/db.js";
 
 function normalizeItems(input) {
 	if (!Array.isArray(input)) return [];
-	return input.slice(0, 20).map((item, index) => ({
+	return input.slice(0, 50).map((item, index) => ({
 		clientFileId: String(item?.clientFileId || `item-${index}`),
 		fileName: String(item?.fileName || "").trim(),
 		mime: String(item?.mime || "").toLowerCase(),
@@ -63,7 +63,7 @@ export async function onRequestPost(context) {
 			}
 
 			const object = await getImageObjectByHash(env.DB, item.contentHash);
-			if (object) {
+			if (object && Number(object.ref_count) > 0) {
 				results.push({
 					clientFileId: item.clientFileId,
 					exists: true,

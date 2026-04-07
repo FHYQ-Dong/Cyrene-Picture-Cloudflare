@@ -3,7 +3,7 @@
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>昔涟 | 上传图片</title>
+		<title>昔涟 | 上传音频</title>
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<link rel="stylesheet" href="/styles.css" />
 		<script
@@ -24,9 +24,7 @@
 				<nav class="header-actions">
 					<a class="button-link" href="/">图片</a>
 					<a class="button-link" href="/audio.html">音频</a>
-					<a class="button-link" href="/upload-audio.html"
-						>上传音频</a
-					>
+					<a class="button-link" href="/upload.html">上传图片</a>
 				</nav>
 			</div>
 		</header>
@@ -34,11 +32,8 @@
 		<main class="container upload-page">
 			<section class="card upload-card">
 				<div class="upload-header">
-					<h2>上传图片</h2>
-					<p>
-						支持 JPEG / PNG / WEBP /
-						AVIF，提交后会自动发布到展示页。
-					</p>
+					<h2>上传音频</h2>
+					<p>仅支持单文件上传，标题必填。</p>
 				</div>
 
 				<div class="upload-form-grid">
@@ -52,16 +47,27 @@
 						/>
 					</label>
 					<label>
-						选择图片
+						音频标题（必填）
 						<input
-							id="fileInput"
-							type="file"
-							multiple
-							accept="image/jpeg,image/png,image/webp,image/avif"
+							id="audioTitle"
+							type="text"
+							maxlength="120"
+							placeholder="例如：meme"
 						/>
 					</label>
 					<label>
-						标签选择
+						选择音频
+						<input
+							id="fileInput"
+							type="file"
+							accept="audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/webm,audio/flac,audio/aac,audio/x-m4a,audio/opus"
+						/>
+					</label>
+				</div>
+
+				<div class="upload-tags-panel">
+					<label>
+						标签（可选）
 						<select id="tagSelect">
 							<option value="">从已有标签中选择</option>
 						</select>
@@ -71,10 +77,10 @@
 							id="newTagInput"
 							type="text"
 							maxlength="30"
-							placeholder="无匹配时输入新标签并添加"
+							placeholder="输入新标签后回车或点击添加"
 						/>
 						<button id="addTagButton" type="button">
-							新增标签
+							添加标签
 						</button>
 					</div>
 					<div id="selectedTags" class="selected-tags"></div>
@@ -86,22 +92,14 @@
 				</div>
 
 				<button id="uploadButton" class="upload-primary-btn">
-					上传
+					上传音频
 				</button>
 				<div id="uploadSummary" class="upload-summary summary-pending">
 					尚未开始上传
 				</div>
-
-				<section class="progress-panel" aria-live="polite">
-					<div class="progress-panel-header">
-						<h3>上传进度</h3>
-						<small id="progressStats">0/0</small>
-					</div>
-					<div id="progressList" class="progress-list"></div>
-				</section>
 			</section>
 		</main>
 
-		<script type="module" src="/upload.js"></script>
+		<script type="module" src="/upload-audio.js"></script>
 	</body>
 </html>

@@ -9,9 +9,12 @@ CREATE TABLE IF NOT EXISTS images (
   thumb_object_key TEXT,
   thumb_public_url TEXT,
   thumb_status TEXT NOT NULL DEFAULT 'none',
+  media_type TEXT NOT NULL DEFAULT 'image',
   mime TEXT NOT NULL,
   size_bytes INTEGER NOT NULL,
   uploader_nickname TEXT NOT NULL DEFAULT '093',
+  duration_seconds REAL,
+  audio_title TEXT,
   width INTEGER,
   height INTEGER,
   status TEXT NOT NULL,
@@ -21,6 +24,7 @@ CREATE TABLE IF NOT EXISTS images (
 
 CREATE INDEX IF NOT EXISTS idx_images_created_at ON images(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_images_status ON images(status);
+CREATE INDEX IF NOT EXISTS idx_images_media_type_created_at ON images(media_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_images_thumb_status_created_at ON images(thumb_status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_images_object_id ON images(object_id);
 CREATE INDEX IF NOT EXISTS idx_images_upload_event_id ON images(upload_event_id);
@@ -54,6 +58,17 @@ CREATE TABLE IF NOT EXISTS image_upload_events (
 
 CREATE INDEX IF NOT EXISTS idx_upload_events_object_created ON image_upload_events(object_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_upload_events_batch ON image_upload_events(source_batch_id);
+
+CREATE TABLE IF NOT EXISTS item_tags (
+  image_id TEXT NOT NULL,
+  media_type TEXT NOT NULL,
+  tag_name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (image_id, media_type, tag_name),
+  FOREIGN KEY (image_id) REFERENCES images(image_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_tags_media_tag_image ON item_tags(media_type, tag_name, image_id);
 
 CREATE TABLE IF NOT EXISTS quota_daily (
   bucket_date TEXT NOT NULL,

@@ -1,7 +1,8 @@
 import { ErrorCode, jsonError, jsonOk } from "../../_shared/errors.js";
+import { getConfig } from "../../_shared/env.js";
 import { onRequestPost as completeSingleUpload } from "../upload-complete.js";
 
-const MAX_BATCH_ITEMS = 20;
+const MAX_BATCH_ITEMS = 50;
 
 function normalizeItems(rawItems) {
 	if (!Array.isArray(rawItems)) return [];
@@ -15,16 +16,23 @@ function normalizeItems(rawItems) {
 		mime: String(item?.mime || "").toLowerCase(),
 		size: Number(item?.size || 0),
 		etag: String(item?.etag || "").trim(),
+		mediaType: String(item?.mediaType || "")
+			.trim()
+			.toLowerCase(),
+		durationSeconds: Number(item?.durationSeconds || 0),
+		audioTitle: String(item?.audioTitle || "").trim(),
 		width: Number(item?.width || 0),
 		height: Number(item?.height || 0),
 		uploaderNickname: item?.uploaderNickname,
 		batchId: item?.batchId,
 		originalFilename: item?.originalFilename,
+		tags: Array.isArray(item?.tags) ? item.tags : [],
 	}));
 }
 
 export async function onRequestPost(context) {
 	const { request, env, waitUntil } = context;
+	const config = getConfig(env);
 
 	try {
 		const body = await request.json().catch(() => null);
@@ -45,8 +53,23 @@ export async function onRequestPost(context) {
 			);
 		}
 
-		const results = [];
-		for (const item of items) {
+		const results = new Array(items.length);
+		const concurrency = Math.min(
+			Math.max(Number(config.uploadBatchCompleteConcurrency || 8), 1),
+			items.length
+		);
+		let cursor = 0;
+
+		async function processItem(item) {
+			if (item.mime.startsWith("audio/") || item.mediaType === "audio") {
+				return {
+					clientFileId: item.clientFileId,
+					ok: false,
+					errorCode: ErrorCode.AudioBatchNotAllowed,
+					message: "audio batch upload is not allowed",
+				};
+			}
+
 			const singleRequestPayload = {
 				clientFileId: item.clientFileId,
 				batchId,
@@ -57,10 +80,14 @@ export async function onRequestPost(context) {
 				mime: item.mime,
 				size: item.size,
 				etag: item.etag,
+				mediaType: item.mediaType || null,
+				durationSeconds: item.durationSeconds || null,
+				audioTitle: item.audioTitle || null,
 				width: item.width,
 				height: item.height,
 				uploaderNickname: item.uploaderNickname,
 				originalFilename: item.originalFilename,
+				tags: item.tags,
 			};
 
 			const singleRequest = new Request(
@@ -81,7 +108,7 @@ export async function onRequestPost(context) {
 			});
 			const singlePayload = await singleResponse.json();
 			if (!singlePayload?.ok) {
-				results.push({
+				return {
 					clientFileId: item.clientFileId,
 					ok: false,
 					errorCode:
@@ -89,11 +116,10 @@ export async function onRequestPost(context) {
 					message:
 						singlePayload?.error?.message ||
 						"upload complete failed",
-				});
-				continue;
+				};
 			}
 
-			results.push({
+			return {
 				clientFileId: item.clientFileId,
 				ok: true,
 				...singlePayload.data,
@@ -101,8 +127,18 @@ export async function onRequestPost(context) {
 					singlePayload?.data?.dedup_hit ??
 						singlePayload?.data?.dedupHit
 				),
-			});
+			};
 		}
+
+		async function worker() {
+			while (cursor < items.length) {
+				const currentIndex = cursor;
+				cursor += 1;
+				results[currentIndex] = await processItem(items[currentIndex]);
+			}
+		}
+
+		await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
 		const successCount = results.filter((item) => item.ok).length;
 		const failedCount = results.length - successCount;

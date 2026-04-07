@@ -1,14 +1,14 @@
 import { dayBucket, nowIso } from "./identity.js";
 
-async function upsertQuota(
+export function buildQuotaUpsertStatement(
 	db,
-	bucketDate,
-	scope,
-	scopeKey,
-	addCount,
-	addBytes
+	{ bucketDate, scope, scopeKey, addCount, addBytes, updatedAt = nowIso() }
 ) {
-	await db
+	const normalizedAddCount = Number(addCount || 0);
+	const normalizedAddBytes = Number(addBytes || 0);
+	if (!bucketDate || !scope || !scopeKey) return null;
+	if (normalizedAddCount <= 0 && normalizedAddBytes <= 0) return null;
+	return db
 		.prepare(
 			`INSERT INTO quota_daily (bucket_date, scope, scope_key, upload_count, upload_bytes, updated_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -17,11 +17,67 @@ async function upsertQuota(
                      upload_bytes = upload_bytes + excluded.upload_bytes,
                      updated_at = excluded.updated_at`
 		)
-		.bind(bucketDate, scope, scopeKey, addCount, addBytes, nowIso())
-		.run();
+		.bind(
+			bucketDate,
+			scope,
+			scopeKey,
+			normalizedAddCount,
+			normalizedAddBytes,
+			updatedAt
+		);
 }
 
-async function getQuotaRow(db, bucketDate, scope, scopeKey) {
+export async function applyQuotaIncrements(
+	db,
+	increments,
+	bucketDate = dayBucket()
+) {
+	const updatedAt = nowIso();
+	const statements = (increments || [])
+		.map((item) =>
+			buildQuotaUpsertStatement(db, {
+				bucketDate,
+				scope: item?.scope,
+				scopeKey: item?.scopeKey,
+				addCount: item?.addCount,
+				addBytes: item?.addBytes,
+				updatedAt,
+			})
+		)
+		.filter(Boolean);
+	if (!statements.length) return;
+	if (typeof db.batch === "function") {
+		await db.batch(statements);
+		return;
+	}
+	for (const statement of statements) {
+		await statement.run();
+	}
+}
+
+async function upsertQuota(
+	db,
+	bucketDate,
+	scope,
+	scopeKey,
+	addCount,
+	addBytes
+) {
+	await applyQuotaIncrements(
+		db,
+		[
+			{
+				scope,
+				scopeKey,
+				addCount,
+				addBytes,
+			},
+		],
+		bucketDate
+	);
+}
+
+export async function getQuotaRow(db, bucketDate, scope, scopeKey) {
 	const row = await db
 		.prepare(
 			`SELECT upload_count, upload_bytes FROM quota_daily WHERE bucket_date = ?1 AND scope = ?2 AND scope_key = ?3`
@@ -32,6 +88,33 @@ async function getQuotaRow(db, bucketDate, scope, scopeKey) {
 		uploadCount: Number(row?.upload_count || 0),
 		uploadBytes: Number(row?.upload_bytes || 0),
 	};
+}
+
+export async function getQuotaRows(db, bucketDate, items) {
+	const normalizedItems = Array.isArray(items) ? items : [];
+	if (!normalizedItems.length) return [];
+	if (typeof db.batch !== "function") {
+		return Promise.all(
+			normalizedItems.map((item) =>
+				getQuotaRow(db, bucketDate, item.scope, item.scopeKey)
+			)
+		);
+	}
+	const statements = normalizedItems.map((item) =>
+		db
+			.prepare(
+				`SELECT upload_count, upload_bytes FROM quota_daily WHERE bucket_date = ?1 AND scope = ?2 AND scope_key = ?3`
+			)
+			.bind(bucketDate, item.scope, item.scopeKey)
+	);
+	const results = await db.batch(statements);
+	return normalizedItems.map((_, index) => {
+		const row = results?.[index]?.results?.[0] || null;
+		return {
+			uploadCount: Number(row?.upload_count || 0),
+			uploadBytes: Number(row?.upload_bytes || 0),
+		};
+	});
 }
 
 export async function checkAndConsumeQuotas(db, identity, fileSize, limits) {

@@ -55,3 +55,40 @@ test("upload-batch/complete aggregates instant-hit result", async () => {
 	assert.equal(payload.data.results[0].uploadMode, "instant");
 	assert.equal(payload.data.results[0].dedupHit, true);
 });
+
+test("upload-batch/complete rejects audio items", async () => {
+	const { env } = createMockContextEnv({
+		THUMBNAIL_ENABLED: "false",
+		LOCAL_UPLOAD_DIRECT: "true",
+	});
+
+	const request = new Request(
+		"https://example.com/api/upload-batch/complete",
+		{
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				batchId: "batch-complete-2",
+				items: [
+					{
+						clientFileId: "audio-1",
+						mime: "audio/mpeg",
+						size: 123,
+						audioTitle: "song",
+						mediaType: "audio",
+					},
+				],
+			}),
+		}
+	);
+
+	const response = await onRequestPost({ request, env, waitUntil: () => {} });
+	const payload = await response.json();
+
+	assert.equal(response.status, 200);
+	assert.equal(payload.ok, true);
+	assert.equal(payload.data.successCount, 0);
+	assert.equal(payload.data.failedCount, 1);
+	assert.equal(payload.data.results[0].ok, false);
+	assert.equal(payload.data.results[0].errorCode, "AUDIO_BATCH_NOT_ALLOWED");
+});

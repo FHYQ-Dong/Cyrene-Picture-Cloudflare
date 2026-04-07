@@ -1,7 +1,11 @@
-import { jsonError, jsonOk, ErrorCode } from "../_shared/errors";
-import { listImages } from "../_shared/db";
-import { getConfig } from "../_shared/env";
-import { resolveImageUrl, resolveThumbUrl } from "../_shared/image-url";
+import { jsonError, jsonOk, ErrorCode } from "../_shared/errors.js";
+import {
+	getTagsByImageIds,
+	normalizeTagName,
+	listImages,
+} from "../_shared/db.js";
+import { getConfig } from "../_shared/env.js";
+import { resolveImageUrl, resolveThumbUrl } from "../_shared/image-url.js";
 
 function parseAsUtcDate(dateText) {
 	const raw = String(dateText || "").trim();
@@ -64,13 +68,27 @@ export async function onRequestGet(context) {
 		const groupBy = ["date", "uploader", "none"].includes(groupByRaw)
 			? groupByRaw
 			: "date";
+		const mediaTypeRaw = String(
+			url.searchParams.get("mediaType") || "image"
+		)
+			.trim()
+			.toLowerCase();
+		const mediaType = mediaTypeRaw === "audio" ? "audio" : "image";
 		const uploader = (url.searchParams.get("uploader") || "").trim();
+		const tag = normalizeTagName(url.searchParams.get("tag") || "");
 
 		const rows = await listImages(
 			env.DB,
 			limit,
 			cursor || null,
-			uploader || null
+			uploader || null,
+			mediaType,
+			tag || null
+		);
+		const tagsByImageId = await getTagsByImageIds(
+			env.DB,
+			rows.map((item) => item.image_id),
+			mediaType
 		);
 		const items = rows.map((item) => {
 			const thumbUrl = resolveThumbUrl(
@@ -88,11 +106,18 @@ export async function onRequestGet(context) {
 			const aspectRatio = width > 0 && height > 0 ? width / height : null;
 			return {
 				...item,
+				tags: tagsByImageId.get(item.image_id) || [],
+				media_type: item.media_type || "image",
 				uploader_nickname: item.uploader_nickname || "093",
 				thumb_status: item.thumb_status || "none",
 				thumb_url: thumbUrl || publicUrl,
 				public_url: publicUrl,
 				aspect_ratio: aspectRatio,
+				duration_seconds:
+					item.duration_seconds == null
+						? null
+						: Number(item.duration_seconds),
+				audio_title: item.audio_title || null,
 			};
 		});
 		const nextCursor = items.length
@@ -100,7 +125,15 @@ export async function onRequestGet(context) {
 			: null;
 		const groups = buildGroups(items, groupBy);
 
-		return jsonOk({ items, nextCursor, groupBy, groups, uploader });
+		return jsonOk({
+			items,
+			nextCursor,
+			groupBy,
+			groups,
+			uploader,
+			tag,
+			mediaType,
+		});
 	} catch {
 		return jsonError(ErrorCode.InternalError, "internal error", 500);
 	}

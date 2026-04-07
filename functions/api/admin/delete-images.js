@@ -6,7 +6,7 @@ import {
 import { writeAdminActionLog } from "../../_shared/db.js";
 import { ErrorCode, jsonError, jsonOk } from "../../_shared/errors.js";
 import { getConfig } from "../../_shared/env.js";
-import { getIdentity, sha256Hex } from "../../_shared/identity.js";
+import { getIdentity, sha256Hex, nowIso } from "../../_shared/identity.js";
 import { incrementMinuteCounter } from "../../_shared/rate-limit.js";
 
 function readAdminTokenFromRequest(request) {
@@ -97,6 +97,7 @@ export async function onRequestPost(context) {
 	}
 
 	const imageIds = normalizeImageIds(body.imageIds);
+	const uploader = String(body.uploader || "").trim();
 	const options = parseDeleteRequestOptions(body, {
 		dryRun: false,
 		continueOnError: true,
@@ -112,10 +113,10 @@ export async function onRequestPost(context) {
 			400
 		);
 	}
-	if (!imageIds.length) {
+	if (!imageIds.length && !uploader) {
 		return jsonError(
 			ErrorCode.InvalidRequest,
-			"imageIds must be a non-empty array",
+			"imageIds or uploader must be provided",
 			400
 		);
 	}
@@ -129,7 +130,8 @@ export async function onRequestPost(context) {
 	}
 
 	auditParams = {
-		count: imageIds.length,
+		count: imageIds.length || 0,
+		uploader: uploader || null,
 		dryRun: dryRunEnabled,
 		continueOnError: options.continueOnError,
 		reason: options.reason,
@@ -137,6 +139,76 @@ export async function onRequestPost(context) {
 	};
 
 	try {
+		if (uploader) {
+			const result = {
+				total_soft_deleted: 0,
+				total_ref_decremented: 0,
+				total_tag_mappings_deleted: 0,
+			};
+			if (!dryRunEnabled) {
+				const ts = nowIso();
+				const updateObjects = await env.DB.prepare(
+					`
+						UPDATE image_objects
+						SET ref_count = CASE WHEN ref_count > 0 THEN ref_count - 1 ELSE 0 END,
+								updated_at = ?2
+						WHERE object_id IN (
+								SELECT object_id FROM images
+								WHERE uploader_nickname = ?1 AND status = 'active' AND object_id IS NOT NULL
+						)
+				`
+				)
+					.bind(uploader, ts)
+					.run();
+				result.total_ref_decremented =
+					updateObjects?.meta?.changes || 0;
+
+				const updateImages = await env.DB.prepare(
+					`
+						UPDATE images
+						SET status = 'deleted', updated_at = ?2
+						WHERE uploader_nickname = ?1 AND status = 'active'
+				`
+				)
+					.bind(uploader, ts)
+					.run();
+				result.total_soft_deleted = updateImages?.meta?.changes || 0;
+
+				const deleteTags = await env.DB.prepare(
+					`
+						DELETE FROM item_tags
+						WHERE image_id IN (
+							SELECT image_id FROM images
+							WHERE uploader_nickname = ?1 AND status = 'deleted' AND updated_at = ?2
+						)
+				`
+				)
+					.bind(uploader, ts)
+					.run()
+					.catch(() => null);
+				result.total_tag_mappings_deleted =
+					deleteTags?.meta?.changes || 0;
+			} else {
+				const countRes = await env.DB.prepare(
+					`SELECT COUNT(*) as count FROM images WHERE uploader_nickname = ?1 AND status = 'active'`
+				)
+					.bind(uploader)
+					.first();
+				result.would_delete = countRes?.count || 0;
+			}
+
+			auditResult = result;
+			return jsonOk(
+				{
+					requestId,
+					actionId,
+					uploader,
+					result,
+				},
+				{ headers: { "cache-control": "no-store" } }
+			);
+		}
+
 		const items = [];
 		for (const imageId of imageIds) {
 			const item = await deleteOneImage({

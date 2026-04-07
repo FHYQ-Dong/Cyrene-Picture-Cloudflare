@@ -56,6 +56,34 @@ class MockD1 {
 		this.imageObjectsById.set(normalized.object_id, normalized);
 	}
 
+	addImage(image) {
+		const imageId = String(image.image_id || crypto.randomUUID());
+		const normalized = {
+			image_id: imageId,
+			object_id: image.object_id || null,
+			upload_event_id: image.upload_event_id || null,
+			content_hash: image.content_hash || null,
+			upload_mode: image.upload_mode || null,
+			object_key: image.object_key || `public/mock/${imageId}.png`,
+			public_url: image.public_url || null,
+			thumb_object_key: image.thumb_object_key || null,
+			thumb_public_url: image.thumb_public_url || null,
+			thumb_status: image.thumb_status || "none",
+			media_type: image.media_type || "image",
+			mime: image.mime || "image/png",
+			size_bytes: Number(image.size_bytes || 0),
+			uploader_nickname: image.uploader_nickname || "093",
+			duration_seconds: image.duration_seconds ?? null,
+			audio_title: image.audio_title || null,
+			width: image.width || null,
+			height: image.height || null,
+			status: image.status || "active",
+			created_at: image.created_at || new Date().toISOString(),
+			updated_at: image.updated_at || new Date().toISOString(),
+		};
+		this.imagesById.set(imageId, normalized);
+	}
+
 	async first(sql, args) {
 		if (sql.includes("SELECT request_count FROM rate_limits_minute")) {
 			const mapKey = this.key(args);
@@ -89,6 +117,33 @@ class MockD1 {
 
 		if (
 			sql.includes("FROM images") &&
+			sql.includes("content_hash = ?1") &&
+			sql.includes("uploader_nickname = ?2")
+		) {
+			const contentHash = args[0];
+			const uploaderNickname = args[1];
+			const wantsAudio = sql.includes("media_type = 'audio'");
+			const rows = Array.from(this.imagesById.values())
+				.filter((item) => {
+					if (item.status !== "active") return false;
+					if (item.content_hash !== contentHash) return false;
+					if (item.uploader_nickname !== uploaderNickname)
+						return false;
+					if (wantsAudio) return item.media_type === "audio";
+					return (
+						!item.media_type ||
+						item.media_type === "image" ||
+						String(item.media_type).trim() === ""
+					);
+				})
+				.sort((a, b) =>
+					String(b.created_at).localeCompare(a.created_at)
+				);
+			return rows[0] || null;
+		}
+
+		if (
+			sql.includes("FROM images") &&
 			sql.includes("WHERE object_key = ?1")
 		) {
 			const objectKey = args[0];
@@ -104,10 +159,91 @@ class MockD1 {
 			return rows[0] || null;
 		}
 
+		if (
+			sql.includes("FROM images") &&
+			sql.includes("WHERE image_id = ?1")
+		) {
+			return this.imagesById.get(args[0]) || null;
+		}
+
 		return null;
 	}
 
-	async all(_sql, _args) {
+	async all(sql, args) {
+		if (
+			sql.includes("FROM images") &&
+			sql.includes("ORDER BY created_at DESC")
+		) {
+			const wantsAudio = sql.includes("media_type = 'audio'");
+			const hasCursor = sql.includes("created_at < ?1");
+			const hasUploader =
+				sql.includes("uploader_nickname = ?") ||
+				sql.includes("uploader_nickname = ?2") ||
+				sql.includes("uploader_nickname = ?1");
+
+			let cursor = null;
+			let uploader = null;
+			let limit = 20;
+
+			if (hasCursor && hasUploader) {
+				cursor = args[0] || null;
+				uploader = args[1] || null;
+				limit = Number(args[2] || 20);
+			} else if (hasUploader) {
+				uploader = args[0] || null;
+				limit = Number(args[1] || 20);
+			} else if (hasCursor) {
+				cursor = args[0] || null;
+				limit = Number(args[1] || 20);
+			} else {
+				limit = Number(args[0] || 20);
+			}
+
+			const rows = Array.from(this.imagesById.values())
+				.filter((item) => {
+					if (item.status !== "active") return false;
+					if (cursor && String(item.created_at) >= String(cursor)) {
+						return false;
+					}
+					if (uploader && item.uploader_nickname !== uploader) {
+						return false;
+					}
+					if (wantsAudio) return item.media_type === "audio";
+					return (
+						!item.media_type ||
+						item.media_type === "image" ||
+						String(item.media_type).trim() === ""
+					);
+				})
+				.sort((a, b) =>
+					String(b.created_at).localeCompare(a.created_at)
+				);
+
+			return rows.slice(0, limit);
+		}
+
+		if (sql.includes("SELECT DISTINCT") && sql.includes("AS nickname")) {
+			const cursor =
+				sql.includes("> ?1") && typeof args?.[0] === "string"
+					? String(args[0])
+					: "";
+			const limit = Number(args?.[sql.includes("> ?1") ? 1 : 0] || 200);
+
+			const nicknames = Array.from(this.imagesById.values())
+				.filter((item) => item.status === "active")
+				.map(
+					(item) =>
+						String(item.uploader_nickname || "093").trim() || "093"
+				)
+				.filter((nickname) => !cursor || nickname > cursor);
+
+			const unique = Array.from(new Set(nicknames)).sort((left, right) =>
+				left.localeCompare(right, "zh-CN")
+			);
+
+			return unique.slice(0, limit).map((nickname) => ({ nickname }));
+		}
+
 		return [];
 	}
 
@@ -189,9 +325,12 @@ class MockD1 {
 				thumbObjectKey,
 				thumbPublicUrl,
 				thumbStatus,
+				mediaType,
 				mime,
 				sizeBytes,
 				uploaderNickname,
+				durationSeconds,
+				audioTitle,
 				width,
 				height,
 				status,
@@ -209,9 +348,12 @@ class MockD1 {
 				thumb_object_key: thumbObjectKey,
 				thumb_public_url: thumbPublicUrl,
 				thumb_status: thumbStatus,
+				media_type: mediaType || "image",
 				mime,
 				size_bytes: sizeBytes,
 				uploader_nickname: uploaderNickname,
+				duration_seconds: durationSeconds ?? null,
+				audio_title: audioTitle || null,
 				width,
 				height,
 				status,

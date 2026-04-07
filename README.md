@@ -11,11 +11,13 @@ npm run db:migrate:local
 npm run db:migrate:v2:local
 npm run db:migrate:v3:local
 npm run db:migrate:v5:local
+npm run db:migrate:v13:local
 ```
 
 如果第二条出现 `duplicate column name: uploader_nickname`，表示 v2 迁移已经执行过，可直接继续下一步。
 如果第三条出现 `duplicate column name: thumb_object_key` / `thumb_public_url` / `thumb_status`，表示 v3 迁移已经执行过，可直接继续下一步。
 如果第四条出现 `table image_objects already exists`，表示 v5 迁移已经执行过，可直接继续下一步。
+如果第五条出现 `duplicate column name: media_type`，表示 v13 迁移已经执行过，可直接继续。
 
 2. 复制并检查本地变量：
 
@@ -46,13 +48,14 @@ npm run dev
 -   展示页：`http://127.0.0.1:8788/`
 -   上传页：`http://127.0.0.1:8788/upload.html`
 
-6. 线上升级（已有旧库时）补一次 v2 字段迁移：
+6. 线上升级（已有旧库时）补对应版本的字段/表迁移：
 
 ```bash
 wrangler d1 execute cyrene_meta --remote --file=infra/d1/schema.sql
 wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v2-uploader-nickname.sql
 wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v3-thumbnails.sql
 wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v5-hash-dedup.sql
+wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v13-audio-media-support.sql
 ```
 
 7. 若启用 Turnstile 正式 key，请配置环境变量：
@@ -70,6 +73,16 @@ wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v5-hash-dedup.s
 -   上传者昵称（可选，默认 `093`）
 -   图片列表与详情
 -   结构化日志与基础错误码
+
+## 最新改动（v13 音频支持）
+
+-   **新入口**：新增独立音频展示页 `/audio.html` 与独立音频上传页 `/upload-audio.html`。
+-   **功能分离**：图片与音频互不干扰，音频列表目前仅展示音频文件。
+-   **上传约束**：
+    1.  不支持音频批量上传，单个音频均必须填写“音频标题”(`audio_title`)。
+    2.  前端自动获取音频的真实时长（`duration_seconds`）随表单提交。
+    3.  仅允许使用新开辟的专门页面处理音频，其余页面依旧默认只查 `media_type = 'image'`。
+-   **底层扩展**：核心数据表 `images` 增加 `media_type`（默认 'image'）、`audio_title` 和 `duration_seconds` 字段。（请务必先跑 `npm run db:migrate:v13:local` 初始化/更新数据库表）。
 
 ## 最新改动（Turnstile 挂件化）
 
@@ -182,6 +195,7 @@ npm run db:migrate:local
 npm run db:migrate:v2:local
 npm run db:migrate:v3:local
 npm run db:migrate:v5:local
+npm run db:migrate:v13:local
 npm run dev
 ```
 
@@ -359,6 +373,7 @@ npm run db:migrate:local
 npm run db:migrate:v2:local
 npm run db:migrate:v3:local
 npm run db:migrate:v5:local
+npm run db:migrate:v13:local
 npm run dev
 ```
 

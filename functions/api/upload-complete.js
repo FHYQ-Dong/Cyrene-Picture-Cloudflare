@@ -2,12 +2,14 @@ import { ErrorCode, jsonError, jsonOk } from "../_shared/errors.js";
 import { getConfig } from "../_shared/env.js";
 import {
 	createOrReuseImageObject,
+	addTagsToImage,
 	consumeUploadTokenRecord,
 	createUploadEvent,
 	getImageObjectByHash,
 	getImageObjectById,
 	getLatestActiveImageByHashAndUploader,
 	getLatestImageByObjectKey,
+	normalizeTagsInput,
 	touchImageUploadTime,
 	upsertImageMetadata,
 } from "../_shared/db.js";
@@ -38,6 +40,22 @@ function normalizeDimension(rawValue) {
 	return normalized > 0 ? normalized : null;
 }
 
+function inferMediaTypeFromMime(mime) {
+	const normalized = String(mime || "")
+		.trim()
+		.toLowerCase();
+	if (normalized.startsWith("image/")) return "image";
+	if (normalized.startsWith("audio/")) return "audio";
+	return "";
+}
+
+function normalizeDurationSeconds(rawValue) {
+	if (rawValue == null || rawValue === "") return null;
+	const value = Number(rawValue);
+	if (!Number.isFinite(value)) return null;
+	return value > 0 ? value : null;
+}
+
 export async function onRequestPost(context) {
 	const { request, env, waitUntil } = context;
 	const config = getConfig(env);
@@ -55,6 +73,7 @@ export async function onRequestPost(context) {
 
 		const imageId = crypto.randomUUID();
 		const uploadEventId = crypto.randomUUID();
+		const tags = normalizeTagsInput(body.tags, 10, 30);
 		const normalizedNickname = normalizeUploaderNickname(
 			body.uploaderNickname,
 			config.uploaderNicknameMaxLength
@@ -63,8 +82,38 @@ export async function onRequestPost(context) {
 		const requestedHash = normalizeContentHash(body.contentHash);
 		const requestedObjectId = String(body.dedupObjectId || "").trim();
 		const uploadToken = String(body.uploadToken || "").trim();
-		const width = normalizeDimension(body.width);
-		const height = normalizeDimension(body.height);
+		const inferredMediaType = inferMediaTypeFromMime(body.mime);
+		if (!inferredMediaType) {
+			return jsonError(ErrorCode.MimeNotAllowed, "mime not allowed", 400);
+		}
+		const requestedMediaType = String(body.mediaType || "")
+			.trim()
+			.toLowerCase();
+		if (requestedMediaType && requestedMediaType !== inferredMediaType) {
+			return jsonError(
+				ErrorCode.InvalidRequest,
+				"media type mismatch",
+				400
+			);
+		}
+		const mediaType = inferredMediaType;
+		const audioTitle =
+			mediaType === "audio" ? String(body.audioTitle || "").trim() : null;
+		if (mediaType === "audio" && !audioTitle) {
+			return jsonError(
+				ErrorCode.AudioTitleRequired,
+				"audio title is required",
+				400
+			);
+		}
+		const durationSeconds =
+			mediaType === "audio"
+				? normalizeDurationSeconds(body.durationSeconds)
+				: null;
+		const width =
+			mediaType === "image" ? normalizeDimension(body.width) : null;
+		const height =
+			mediaType === "image" ? normalizeDimension(body.height) : null;
 
 		let objectKey = String(body.objectKey || "").trim();
 		let contentHash = requestedHash;
@@ -78,10 +127,10 @@ export async function onRequestPost(context) {
 				env.DB,
 				requestedObjectId
 			);
-			if (!dedupObject) {
+			if (!dedupObject || Number(dedupObject.ref_count) <= 0) {
 				return jsonError(
 					ErrorCode.ObjectNotFound,
-					"dedup object not found",
+					"dedup object not found or deleted",
 					404
 				);
 			}
@@ -196,7 +245,8 @@ export async function onRequestPost(context) {
 		existingImageForUploader = await getLatestActiveImageByHashAndUploader(
 			env.DB,
 			contentHash,
-			normalizedNickname.nickname
+			normalizedNickname.nickname,
+			mediaType
 		);
 
 		if (existingImageForUploader) {
@@ -218,6 +268,13 @@ export async function onRequestPost(context) {
 			await touchImageUploadTime(
 				env.DB,
 				existingImageForUploader.image_id
+			);
+
+			await addTagsToImage(
+				env.DB,
+				existingImageForUploader.image_id,
+				tags,
+				existingImageForUploader.media_type || mediaType
 			);
 
 			const reusedPublicUrl =
@@ -244,6 +301,7 @@ export async function onRequestPost(context) {
 				objectId: existingImageForUploader.object_id,
 				uploadEventId: existingImageForUploader.upload_event_id,
 				contentHash,
+				mediaType: existingImageForUploader.media_type || mediaType,
 				uploadMode: "reuse_existing",
 				dedupHit: true,
 				publicUrl: reusedPublicUrl,
@@ -251,6 +309,10 @@ export async function onRequestPost(context) {
 					existingImageForUploader.thumb_status === "ready"
 						? existingImageForUploader.thumb_public_url
 						: null,
+				durationSeconds:
+					existingImageForUploader.duration_seconds ?? null,
+				audioTitle: existingImageForUploader.audio_title || null,
+				tags,
 				uploaderNickname: normalizedNickname.nickname,
 				status: "active",
 				reusedExistingImage: true,
@@ -315,13 +377,18 @@ export async function onRequestPost(context) {
 			env.DB,
 			objectKey
 		);
-		const thumbObjectKey = createThumbObjectKey(
-			objectKey,
-			imageId,
-			config.thumbnailFormat
-		);
+		const thumbObjectKey =
+			mediaType === "image"
+				? createThumbObjectKey(
+						objectKey,
+						imageId,
+						config.thumbnailFormat
+				  )
+				: null;
 		const inheritedThumbReady =
-			latestForObject && latestForObject.thumb_status === "ready";
+			mediaType === "image" &&
+			latestForObject &&
+			latestForObject.thumb_status === "ready";
 
 		await upsertImageMetadata(env.DB, {
 			imageId,
@@ -331,9 +398,12 @@ export async function onRequestPost(context) {
 			uploadMode,
 			objectKey,
 			publicUrl,
+			mediaType,
 			mime: body.mime,
 			size: Number(imageObject.size_bytes || body.size),
 			uploaderNickname: normalizedNickname.nickname,
+			durationSeconds,
+			audioTitle,
 			width,
 			height,
 			thumbObjectKey: inheritedThumbReady
@@ -350,7 +420,10 @@ export async function onRequestPost(context) {
 			status: "active",
 		});
 
+		await addTagsToImage(env.DB, imageId, tags, mediaType);
+
 		if (
+			mediaType === "image" &&
 			config.thumbnailEnabled &&
 			typeof waitUntil === "function" &&
 			!inheritedThumbReady &&
@@ -384,12 +457,16 @@ export async function onRequestPost(context) {
 			objectId: imageObject.object_id,
 			uploadEventId,
 			contentHash,
+			mediaType,
 			uploadMode,
 			dedupHit,
 			publicUrl,
 			thumbUrl: inheritedThumbReady
 				? latestForObject.thumb_public_url
 				: null,
+			durationSeconds,
+			audioTitle,
+			tags,
 			uploaderNickname: normalizedNickname.nickname,
 			status: "active",
 		});

@@ -19,6 +19,8 @@ export const ErrorCode = {
 	UploadBatchSessionMissing: "UPLOAD_BATCH_SESSION_MISSING",
 	UploadBatchSessionInvalid: "UPLOAD_BATCH_SESSION_INVALID",
 	UploadBatchSessionExpired: "UPLOAD_BATCH_SESSION_EXPIRED",
+	AudioTitleRequired: "AUDIO_TITLE_REQUIRED",
+	AudioBatchNotAllowed: "AUDIO_BATCH_NOT_ALLOWED",
 	AdminUnauthorized: "ADMIN_UNAUTHORIZED",
 	BatchLimitExceeded: "BATCH_LIMIT_EXCEEDED",
 	ImageAlreadyDeleted: "IMAGE_ALREADY_DELETED",

@@ -99,7 +99,11 @@ export async function issueBatchSessionToken(config, payload) {
 	};
 }
 
-export async function verifyBatchSessionToken(config, batchSessionToken) {
+export async function verifyBatchSessionToken(
+	config,
+	batchSessionToken,
+	options = {}
+) {
 	if (!config.uploadBatchSessionSecret) {
 		return {
 			ok: false,
@@ -151,10 +155,33 @@ export async function verifyBatchSessionToken(config, batchSessionToken) {
 	}
 
 	const expiresAt = new Date(payload.expiresAt).getTime();
-	if (!Number.isFinite(expiresAt) || expiresAt < Date.now()) {
+	if (!Number.isFinite(expiresAt)) {
 		return {
 			ok: false,
 			reason: "UPLOAD_BATCH_SESSION_EXPIRED",
+			payload,
+		};
+	}
+
+	const nowMs = Date.now();
+	if (expiresAt < nowMs) {
+		const graceSeconds = Math.max(
+			Number(options.allowExpiredWithinSeconds || 0),
+			0
+		);
+		const graceMs = graceSeconds * 1000;
+		if (graceMs > 0 && nowMs - expiresAt <= graceMs) {
+			return {
+				ok: true,
+				payload,
+				isGraceRenewed: true,
+			};
+		}
+
+		return {
+			ok: false,
+			reason: "UPLOAD_BATCH_SESSION_EXPIRED",
+			payload,
 		};
 	}
 

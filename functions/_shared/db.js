@@ -1,5 +1,37 @@
 import { nowIso } from "./identity.js";
 
+export function normalizeMediaType(rawMediaType) {
+	return String(rawMediaType || "")
+		.trim()
+		.toLowerCase() === "audio"
+		? "audio"
+		: "image";
+}
+
+export function normalizeTagName(rawTag, maxLength = 30) {
+	const normalized = String(rawTag || "")
+		.trim()
+		.toLowerCase()
+		.replace(/\s+/g, " ");
+	if (!normalized) return "";
+	if (normalized.length > maxLength) {
+		return normalized.slice(0, maxLength);
+	}
+	return normalized;
+}
+
+export function normalizeTagsInput(rawTags, maxCount = 10, maxLength = 30) {
+	if (!Array.isArray(rawTags)) return [];
+	const unique = new Set();
+	for (const rawTag of rawTags) {
+		const tag = normalizeTagName(rawTag, maxLength);
+		if (!tag) continue;
+		unique.add(tag);
+		if (unique.size >= maxCount) break;
+	}
+	return Array.from(unique);
+}
+
 export async function upsertImageMetadata(db, payload) {
 	await db
 		.prepare(
@@ -14,16 +46,19 @@ export async function upsertImageMetadata(db, payload) {
 			 thumb_object_key,
 			 thumb_public_url,
 			 thumb_status,
+			 media_type,
 			 mime,
 			 size_bytes,
 			 uploader_nickname,
+			 duration_seconds,
+			 audio_title,
 			 width,
 			 height,
 			 status,
 			 created_at,
 			 updated_at
 	   )
-	   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+	   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
 	   ON CONFLICT(image_id)
 	   DO UPDATE SET
 		 object_id = excluded.object_id,
@@ -35,9 +70,12 @@ export async function upsertImageMetadata(db, payload) {
 		 thumb_object_key = excluded.thumb_object_key,
 		 thumb_public_url = excluded.thumb_public_url,
 		 thumb_status = excluded.thumb_status,
+		 media_type = excluded.media_type,
 		 mime = excluded.mime,
 		 size_bytes = excluded.size_bytes,
 		 uploader_nickname = excluded.uploader_nickname,
+		 duration_seconds = excluded.duration_seconds,
+		 audio_title = excluded.audio_title,
 		 width = excluded.width,
 		 height = excluded.height,
 		 status = excluded.status,
@@ -54,9 +92,12 @@ export async function upsertImageMetadata(db, payload) {
 			payload.thumbObjectKey || null,
 			payload.thumbPublicUrl || null,
 			payload.thumbStatus || "none",
+			payload.mediaType || "image",
 			payload.mime,
 			payload.size,
 			payload.uploaderNickname || "093",
+			payload.durationSeconds ?? null,
+			payload.audioTitle || null,
 			payload.width || null,
 			payload.height || null,
 			payload.status || "active",
@@ -90,56 +131,404 @@ export async function listImages(
 	db,
 	limit = 20,
 	cursorCreatedAt = null,
-	uploaderNickname = null
+	uploaderNickname = null,
+	mediaType = "image",
+	tagName = null
 ) {
-	if (cursorCreatedAt && uploaderNickname) {
-		const rows = await db
-			.prepare(
-				`SELECT image_id, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, mime, size_bytes, uploader_nickname, width, height, created_at
+	const normalizedMediaType = normalizeMediaType(mediaType);
+	const mediaTypeCondition =
+		normalizedMediaType === "audio"
+			? "images.media_type = 'audio'"
+			: "(images.media_type = 'image' OR images.media_type IS NULL OR TRIM(images.media_type) = '')";
+	const normalizedTagName = normalizeTagName(tagName);
+
+	if (!normalizedTagName) {
+		if (cursorCreatedAt && uploaderNickname) {
+			const rows = await db
+				.prepare(
+					`SELECT image_id, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, media_type, mime, size_bytes, uploader_nickname, duration_seconds, audio_title, width, height, created_at
          FROM images
-         WHERE status = 'active' AND created_at < ?1 AND uploader_nickname = ?2
+         WHERE status = 'active' AND ${mediaTypeCondition} AND created_at < ?1 AND uploader_nickname = ?2
          ORDER BY created_at DESC
          LIMIT ?3`
+				)
+				.bind(cursorCreatedAt, uploaderNickname, limit)
+				.all();
+			return rows.results || [];
+		}
+
+		if (uploaderNickname) {
+			const rows = await db
+				.prepare(
+					`SELECT image_id, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, media_type, mime, size_bytes, uploader_nickname, duration_seconds, audio_title, width, height, created_at
+         FROM images
+         WHERE status = 'active' AND ${mediaTypeCondition} AND uploader_nickname = ?1
+         ORDER BY created_at DESC
+         LIMIT ?2`
+				)
+				.bind(uploaderNickname, limit)
+				.all();
+			return rows.results || [];
+		}
+
+		if (cursorCreatedAt) {
+			const rows = await db
+				.prepare(
+					`SELECT image_id, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, media_type, mime, size_bytes, uploader_nickname, duration_seconds, audio_title, width, height, created_at
+         FROM images
+         WHERE status = 'active' AND ${mediaTypeCondition} AND created_at < ?1
+         ORDER BY created_at DESC
+         LIMIT ?2`
+				)
+				.bind(cursorCreatedAt, limit)
+				.all();
+			return rows.results || [];
+		}
+
+		const rows = await db
+			.prepare(
+				`SELECT image_id, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, media_type, mime, size_bytes, uploader_nickname, duration_seconds, audio_title, width, height, created_at
+       FROM images
+       WHERE status = 'active' AND ${mediaTypeCondition}
+       ORDER BY created_at DESC
+       LIMIT ?1`
 			)
-			.bind(cursorCreatedAt, uploaderNickname, limit)
+			.bind(limit)
 			.all();
+
 		return rows.results || [];
+	}
+
+	const normalizedMediaExpr =
+		"COALESCE(NULLIF(TRIM(images.media_type), ''), 'image')";
+	const baseSelect =
+		`SELECT images.image_id, images.object_key, images.public_url, images.thumb_object_key, images.thumb_public_url, images.thumb_status, images.media_type, images.mime, images.size_bytes, images.uploader_nickname, images.duration_seconds, images.audio_title, images.width, images.height, images.created_at\n` +
+		`FROM images\n`;
+	const joinTag = normalizedTagName
+		? `JOIN item_tags ON item_tags.image_id = images.image_id AND item_tags.media_type = ${normalizedMediaExpr}\n`
+		: "";
+	const tagFilter = normalizedTagName ? " AND item_tags.tag_name = ?" : "";
+
+	const legacyJoinTag = normalizedTagName
+		? "JOIN item_tags ON item_tags.image_id = images.image_id\n"
+		: "";
+
+	async function runTaggedQuery(sqlWithJoin, binds, sqlWithLegacyJoin) {
+		try {
+			const rows = await db
+				.prepare(sqlWithJoin)
+				.bind(...binds)
+				.all();
+			return rows.results || [];
+		} catch {
+			const rows = await db
+				.prepare(sqlWithLegacyJoin)
+				.bind(...binds)
+				.all();
+			return rows.results || [];
+		}
+	}
+
+	if (cursorCreatedAt && uploaderNickname) {
+		const sql =
+			baseSelect +
+			joinTag +
+			`WHERE images.status = 'active' AND ${mediaTypeCondition} AND images.created_at < ? AND images.uploader_nickname = ?${tagFilter}\n` +
+			`ORDER BY images.created_at DESC\n` +
+			`LIMIT ?`;
+		if (!normalizedTagName) {
+			const rows = await db
+				.prepare(sql)
+				.bind(cursorCreatedAt, uploaderNickname, limit)
+				.all();
+			return rows.results || [];
+		}
+		const legacySql =
+			baseSelect +
+			legacyJoinTag +
+			`WHERE images.status = 'active' AND ${mediaTypeCondition} AND images.created_at < ? AND images.uploader_nickname = ?${tagFilter}\n` +
+			`ORDER BY images.created_at DESC\n` +
+			`LIMIT ?`;
+		return runTaggedQuery(
+			sql,
+			[cursorCreatedAt, uploaderNickname, normalizedTagName, limit],
+			legacySql
+		);
 	}
 
 	if (uploaderNickname) {
-		const rows = await db
-			.prepare(
-				`SELECT image_id, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, mime, size_bytes, uploader_nickname, width, height, created_at
-         FROM images
-         WHERE status = 'active' AND uploader_nickname = ?1
-         ORDER BY created_at DESC
-         LIMIT ?2`
-			)
-			.bind(uploaderNickname, limit)
-			.all();
-		return rows.results || [];
+		const sql =
+			baseSelect +
+			joinTag +
+			`WHERE images.status = 'active' AND ${mediaTypeCondition} AND images.uploader_nickname = ?${tagFilter}\n` +
+			`ORDER BY images.created_at DESC\n` +
+			`LIMIT ?`;
+		if (!normalizedTagName) {
+			const rows = await db
+				.prepare(sql)
+				.bind(uploaderNickname, limit)
+				.all();
+			return rows.results || [];
+		}
+		const legacySql =
+			baseSelect +
+			legacyJoinTag +
+			`WHERE images.status = 'active' AND ${mediaTypeCondition} AND images.uploader_nickname = ?${tagFilter}\n` +
+			`ORDER BY images.created_at DESC\n` +
+			`LIMIT ?`;
+		return runTaggedQuery(
+			sql,
+			[uploaderNickname, normalizedTagName, limit],
+			legacySql
+		);
 	}
 
 	if (cursorCreatedAt) {
+		const sql =
+			baseSelect +
+			joinTag +
+			`WHERE images.status = 'active' AND ${mediaTypeCondition} AND images.created_at < ?${tagFilter}\n` +
+			`ORDER BY images.created_at DESC\n` +
+			`LIMIT ?`;
+		if (!normalizedTagName) {
+			const rows = await db
+				.prepare(sql)
+				.bind(cursorCreatedAt, limit)
+				.all();
+			return rows.results || [];
+		}
+		const legacySql =
+			baseSelect +
+			legacyJoinTag +
+			`WHERE images.status = 'active' AND ${mediaTypeCondition} AND images.created_at < ?${tagFilter}\n` +
+			`ORDER BY images.created_at DESC\n` +
+			`LIMIT ?`;
+		return runTaggedQuery(
+			sql,
+			[cursorCreatedAt, normalizedTagName, limit],
+			legacySql
+		);
+	}
+
+	const sql =
+		baseSelect +
+		joinTag +
+		`WHERE images.status = 'active' AND ${mediaTypeCondition}${tagFilter}\n` +
+		`ORDER BY images.created_at DESC\n` +
+		`LIMIT ?`;
+	if (!normalizedTagName) {
+		const rows = await db.prepare(sql).bind(limit).all();
+		return rows.results || [];
+	}
+	const legacySql =
+		baseSelect +
+		legacyJoinTag +
+		`WHERE images.status = 'active' AND ${mediaTypeCondition}${tagFilter}\n` +
+		`ORDER BY images.created_at DESC\n` +
+		`LIMIT ?`;
+	return runTaggedQuery(sql, [normalizedTagName, limit], legacySql);
+}
+
+export async function addTagsToImage(db, imageId, tags, mediaType = "image") {
+	const normalizedTags = normalizeTagsInput(tags);
+	if (!imageId || !normalizedTags.length) return;
+	const normalizedMediaType = normalizeMediaType(mediaType);
+	const createdAt = nowIso();
+	try {
+		for (const tag of normalizedTags) {
+			await db
+				.prepare(
+					`INSERT INTO item_tags (image_id, media_type, tag_name, created_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(image_id, media_type, tag_name) DO NOTHING`
+				)
+				.bind(imageId, normalizedMediaType, tag, createdAt)
+				.run();
+		}
+	} catch {
+		for (const tag of normalizedTags) {
+			await db
+				.prepare(
+					`INSERT INTO item_tags (image_id, tag_name, created_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(image_id, tag_name) DO NOTHING`
+				)
+				.bind(imageId, tag, createdAt)
+				.run()
+				.catch(() => null);
+		}
+	}
+}
+
+export async function getTagsByImageIds(db, imageIds, mediaType = "image") {
+	const uniqueIds = Array.from(
+		new Set(
+			(imageIds || [])
+				.map((id) => String(id || "").trim())
+				.filter(Boolean)
+		)
+	);
+	if (!uniqueIds.length) return new Map();
+	const normalizedMediaType = normalizeMediaType(mediaType);
+
+	const placeholders = uniqueIds.map(() => "?").join(",");
+	const sql = `SELECT image_id, tag_name
+       FROM item_tags
+       WHERE image_id IN (${placeholders})
+         AND media_type = ?
+       ORDER BY tag_name ASC`;
+	const legacySql = `SELECT image_id, tag_name
+       FROM item_tags
+       WHERE image_id IN (${placeholders})
+       ORDER BY tag_name ASC`;
+	let rows;
+	try {
+		rows = await db
+			.prepare(sql)
+			.bind(...uniqueIds, normalizedMediaType)
+			.all();
+	} catch {
+		try {
+			rows = await db
+				.prepare(legacySql)
+				.bind(...uniqueIds)
+				.all();
+		} catch {
+			return new Map();
+		}
+	}
+	const map = new Map();
+	for (const row of rows.results || []) {
+		const imageId = String(row.image_id || "").trim();
+		const tagName = String(row.tag_name || "").trim();
+		if (!imageId || !tagName) continue;
+		if (!map.has(imageId)) map.set(imageId, []);
+		map.get(imageId).push(tagName);
+	}
+	return map;
+}
+
+export async function listTags(
+	db,
+	{ limit = 100, keyword = "", mediaType = "image" } = {}
+) {
+	const normalizedLimit = Math.min(Math.max(Number(limit || 100), 1), 200);
+	const normalizedKeyword = normalizeTagName(keyword, 30);
+	const normalizedMediaType = normalizeMediaType(mediaType);
+	const mediaTypeCondition =
+		normalizedMediaType === "audio"
+			? "(images.media_type = 'audio')"
+			: "(images.media_type = 'image' OR images.media_type IS NULL OR TRIM(images.media_type) = '')";
+
+	const queryWithMediaColumn = normalizedKeyword
+		? `SELECT item_tags.tag_name, COUNT(item_tags.image_id) AS count
+         FROM item_tags
+         JOIN images ON images.image_id = item_tags.image_id
+         WHERE images.status = 'active'
+           AND ${mediaTypeCondition}
+           AND item_tags.media_type = ?1
+           AND item_tags.tag_name LIKE ?2
+         GROUP BY item_tags.tag_name
+         ORDER BY count DESC, item_tags.tag_name ASC
+         LIMIT ?3`
+		: `SELECT item_tags.tag_name, COUNT(item_tags.image_id) AS count
+       FROM item_tags
+       JOIN images ON images.image_id = item_tags.image_id
+       WHERE images.status = 'active'
+         AND ${mediaTypeCondition}
+         AND item_tags.media_type = ?1
+       GROUP BY item_tags.tag_name
+       ORDER BY count DESC, item_tags.tag_name ASC
+       LIMIT ?2`;
+
+	const queryLegacy = normalizedKeyword
+		? `SELECT item_tags.tag_name, COUNT(item_tags.image_id) AS count
+         FROM item_tags
+         JOIN images ON images.image_id = item_tags.image_id
+         WHERE images.status = 'active'
+           AND ${mediaTypeCondition}
+           AND item_tags.tag_name LIKE ?1
+         GROUP BY item_tags.tag_name
+         ORDER BY count DESC, item_tags.tag_name ASC
+         LIMIT ?2`
+		: `SELECT item_tags.tag_name, COUNT(item_tags.image_id) AS count
+       FROM item_tags
+       JOIN images ON images.image_id = item_tags.image_id
+       WHERE images.status = 'active'
+         AND ${mediaTypeCondition}
+       GROUP BY item_tags.tag_name
+       ORDER BY count DESC, item_tags.tag_name ASC
+       LIMIT ?1`;
+
+	if (normalizedKeyword) {
+		let rows;
+		try {
+			rows = await db
+				.prepare(queryWithMediaColumn)
+				.bind(
+					normalizedMediaType,
+					`%${normalizedKeyword}%`,
+					normalizedLimit
+				)
+				.all();
+		} catch {
+			try {
+				rows = await db
+					.prepare(queryLegacy)
+					.bind(`%${normalizedKeyword}%`, normalizedLimit)
+					.all();
+			} catch {
+				return [];
+			}
+		}
+		return rows.results || [];
+	}
+
+	let rows;
+	try {
+		rows = await db
+			.prepare(queryWithMediaColumn)
+			.bind(normalizedMediaType, normalizedLimit)
+			.all();
+	} catch {
+		try {
+			rows = await db.prepare(queryLegacy).bind(normalizedLimit).all();
+		} catch {
+			return [];
+		}
+	}
+	return rows.results || [];
+}
+
+export async function listDistinctUploaders(
+	db,
+	limit = 200,
+	cursorNickname = null
+) {
+	const normalizedNicknameSql =
+		"COALESCE(NULLIF(TRIM(uploader_nickname), ''), '093')";
+
+	if (cursorNickname) {
 		const rows = await db
 			.prepare(
-				`SELECT image_id, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, mime, size_bytes, uploader_nickname, width, height, created_at
+				`SELECT DISTINCT ${normalizedNicknameSql} AS nickname
          FROM images
-         WHERE status = 'active' AND created_at < ?1
-         ORDER BY created_at DESC
+         WHERE status = 'active'
+           AND ${normalizedNicknameSql} > ?1
+         ORDER BY nickname ASC
          LIMIT ?2`
 			)
-			.bind(cursorCreatedAt, limit)
+			.bind(cursorNickname, limit)
 			.all();
 		return rows.results || [];
 	}
 
 	const rows = await db
 		.prepare(
-			`SELECT image_id, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, mime, size_bytes, uploader_nickname, width, height, created_at
+			`SELECT DISTINCT ${normalizedNicknameSql} AS nickname
        FROM images
        WHERE status = 'active'
-       ORDER BY created_at DESC
+       ORDER BY nickname ASC
        LIMIT ?1`
 		)
 		.bind(limit)
@@ -151,7 +540,7 @@ export async function listImages(
 export async function getImageById(db, imageId) {
 	return db
 		.prepare(
-			`SELECT image_id, object_id, upload_event_id, content_hash, upload_mode, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, mime, size_bytes, uploader_nickname, width, height, created_at, status
+			`SELECT image_id, object_id, upload_event_id, content_hash, upload_mode, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, media_type, mime, size_bytes, uploader_nickname, duration_seconds, audio_title, width, height, created_at, status
        FROM images
        WHERE image_id = ?1`
 		)
@@ -234,7 +623,16 @@ export async function softDeleteImage(db, imageId) {
 		.bind(imageId, timestamp)
 		.run();
 
-	return Number(result?.meta?.changes || 0) > 0;
+	const changed = Number(result?.meta?.changes || 0) > 0;
+	if (changed) {
+		await db
+			.prepare(`DELETE FROM item_tags WHERE image_id = ?1`)
+			.bind(imageId)
+			.run()
+			.catch(() => null);
+	}
+
+	return changed;
 }
 
 export async function getLatestImageByObjectKey(db, objectKey) {
@@ -253,15 +651,23 @@ export async function getLatestImageByObjectKey(db, objectKey) {
 export async function getLatestActiveImageByHashAndUploader(
 	db,
 	contentHash,
-	uploaderNickname
+	uploaderNickname,
+	mediaType = "image"
 ) {
+	const normalizedMediaType = mediaType === "audio" ? "audio" : "image";
+	const mediaTypeCondition =
+		normalizedMediaType === "audio"
+			? "media_type = 'audio'"
+			: "(media_type = 'image' OR media_type IS NULL OR TRIM(media_type) = '')";
+
 	return db
 		.prepare(
-			`SELECT image_id, object_id, upload_event_id, content_hash, upload_mode, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, mime, size_bytes, uploader_nickname, width, height, created_at, status
+			`SELECT image_id, object_id, upload_event_id, content_hash, upload_mode, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status, media_type, mime, size_bytes, uploader_nickname, duration_seconds, audio_title, width, height, created_at, status
        FROM images
        WHERE status = 'active'
          AND content_hash = ?1
          AND uploader_nickname = ?2
+         AND ${mediaTypeCondition}
        ORDER BY created_at DESC
        LIMIT 1`
 		)
@@ -331,9 +737,14 @@ export async function createOrReuseImageObject(db, payload) {
 		.prepare(
 			`INSERT INTO image_objects (object_id, content_hash, object_key, mime, size_bytes, r2_etag, created_at, updated_at, ref_count)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)
-       ON CONFLICT(content_hash)
-       DO UPDATE SET ref_count = image_objects.ref_count + 1,
-                     updated_at = excluded.updated_at`
+         ON CONFLICT(content_hash)
+         DO UPDATE SET 
+             ref_count = image_objects.ref_count + 1,
+             object_key = CASE WHEN image_objects.ref_count <= 0 THEN excluded.object_key ELSE image_objects.object_key END,
+             mime = CASE WHEN image_objects.ref_count <= 0 THEN excluded.mime ELSE image_objects.mime END,
+             size_bytes = CASE WHEN image_objects.ref_count <= 0 THEN excluded.size_bytes ELSE image_objects.size_bytes END,
+             r2_etag = CASE WHEN image_objects.ref_count <= 0 THEN excluded.r2_etag ELSE image_objects.r2_etag END,
+             updated_at = excluded.updated_at`
 		)
 		.bind(
 			payload.objectId,
@@ -371,11 +782,20 @@ export async function createUploadEvent(db, payload) {
 }
 
 export async function getImageNeighbors(db, image) {
+	const mediaType = String(image?.media_type || "image")
+		.trim()
+		.toLowerCase();
+	const mediaTypeCondition =
+		mediaType === "audio"
+			? "media_type = 'audio'"
+			: "(media_type = 'image' OR media_type IS NULL OR TRIM(media_type) = '')";
+
 	const prev = await db
 		.prepare(
 			`SELECT image_id, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status
        FROM images
        WHERE status = 'active'
+         AND ${mediaTypeCondition}
          AND (
            created_at > ?1
            OR (created_at = ?1 AND image_id > ?2)
@@ -391,6 +811,7 @@ export async function getImageNeighbors(db, image) {
 			`SELECT image_id, object_key, public_url, thumb_object_key, thumb_public_url, thumb_status
        FROM images
        WHERE status = 'active'
+				 AND ${mediaTypeCondition}
          AND (
            created_at < ?1
            OR (created_at = ?1 AND image_id < ?2)
@@ -405,8 +826,17 @@ export async function getImageNeighbors(db, image) {
 }
 
 export async function createUploadTokenRecord(db, payload) {
+	const statement = buildCreateUploadTokenRecordStatement(db, payload);
+	if (!statement) return;
+	await statement.run();
+}
+
+export function buildCreateUploadTokenRecordStatement(db, payload) {
+	if (!db || !payload?.tokenId || !payload?.objectKey || !payload?.mime) {
+		return null;
+	}
 	const timestamp = nowIso();
-	await db
+	return db
 		.prepare(
 			`INSERT INTO upload_tokens (
          token_id,
@@ -432,8 +862,7 @@ export async function createUploadTokenRecord(db, payload) {
 			payload.expiresAt,
 			timestamp,
 			timestamp
-		)
-		.run();
+		);
 }
 
 export async function consumeUploadTokenRecord(db, payload) {

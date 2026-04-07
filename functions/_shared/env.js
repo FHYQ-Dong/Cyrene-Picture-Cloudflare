@@ -35,6 +35,18 @@ export function getConfig(env) {
 			"UPLOAD_BATCH_SESSION_TTL_SECONDS",
 			900
 		),
+		uploadBatchSessionRefreshGraceSeconds: readNumber(
+			env,
+			"UPLOAD_BATCH_SESSION_REFRESH_GRACE_SECONDS",
+			7200
+		),
+		uploadBatchCompleteConcurrency: Math.min(
+			Math.max(
+				readNumber(env, "UPLOAD_BATCH_COMPLETE_CONCURRENCY", 8),
+				1
+			),
+			12
+		),
 		uploadCompleteRequireToken:
 			(env.UPLOAD_COMPLETE_REQUIRE_TOKEN || "false") === "true",
 		uploadTokenSecret: String(env.UPLOAD_TOKEN_SECRET || "").trim(),
@@ -59,6 +71,15 @@ export function getConfig(env) {
 			"image/png",
 			"image/webp",
 			"image/avif",
+			"audio/mpeg",
+			"audio/wav",
+			"audio/ogg",
+			"audio/mp4",
+			"audio/webm",
+			"audio/flac",
+			"audio/aac",
+			"audio/x-m4a",
+			"audio/opus",
 		]),
 		publicImageBaseUrl:
 			env.PUBLIC_IMAGE_BASE_URL || "https://img.example.com",

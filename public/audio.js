@@ -45,6 +45,15 @@ function formatDateGmt8(dateText) {
 	return gmt8.toISOString().slice(0, 10);
 }
 
+function formatDuration(seconds) {
+	const value = Number(seconds || 0);
+	if (!Number.isFinite(value) || value <= 0) return "未知时长";
+	const total = Math.round(value);
+	const mm = Math.floor(total / 60);
+	const ss = total % 60;
+	return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+}
+
 function closeAllCustomSelects(except = null) {
 	document.querySelectorAll(".custom-select.is-open").forEach((node) => {
 		if (except && node === except) return;
@@ -141,56 +150,30 @@ function createCustomSelect(selectEl) {
 	};
 }
 
-function getAspectInfo(item) {
-	const width = Number(item.width || 0);
-	const height = Number(item.height || 0);
-	const ratio = Number(item.aspect_ratio || 0);
-	const safeRatio =
-		ratio > 0 ? ratio : width > 0 && height > 0 ? width / height : 0;
-
-	if (!safeRatio) return { type: "unknown", ratio: 0 };
-	if (safeRatio <= 0.8) return { type: "portrait", ratio: safeRatio };
-	if (safeRatio >= 1.2) return { type: "landscape", ratio: safeRatio };
-	return { type: "square", ratio: safeRatio };
-}
-
 function groupTitle(groupBy, groupKey) {
 	if (groupBy === "uploader") return `上传者：${groupKey}`;
 	if (groupBy === "date") return `上传日期：${formatDateGmt8(groupKey)}`;
-	return "图片";
+	return "音频";
 }
 
-function createImageCard(item) {
+function createAudioCard(item) {
 	const card = document.createElement("article");
-	const aspect = getAspectInfo(item);
-	card.className = `image-card image-ratio-${aspect.type}`;
+	card.className = "audio-card";
 
-	const media = document.createElement("div");
-	media.className = "image-card-media";
-	if (aspect.ratio > 0) {
-		media.style.aspectRatio = `${aspect.ratio}`;
-	}
-
-	const img = document.createElement("img");
-	img.src = item.thumb_url || item.public_url;
-	img.alt = item.image_id;
-	img.loading = "lazy";
-
-	media.appendChild(img);
-
-	const thumbLink = document.createElement("a");
-	thumbLink.className = "image-card-thumb-link";
-	thumbLink.href = `/image.html?id=${encodeURIComponent(item.image_id)}`;
-	thumbLink.target = "_blank";
-	thumbLink.rel = "noopener noreferrer";
-	thumbLink.setAttribute("aria-label", "查看图片详情");
-	thumbLink.appendChild(media);
+	const title = document.createElement("h4");
+	title.className = "audio-title";
+	title.textContent = item.audio_title || "未命名音频";
 
 	const meta = document.createElement("div");
-	meta.className = "image-meta";
+	meta.className = "audio-meta";
 	meta.textContent = `${item.uploader_nickname || "093"} · ${formatDateGmt8(
 		item.created_at
-	)}`;
+	)} · ${formatDuration(item.duration_seconds)}`;
+
+	const player = document.createElement("audio");
+	player.controls = true;
+	player.preload = "none";
+	player.src = item.public_url;
 
 	const tagsWrap = document.createElement("div");
 	tagsWrap.className = "image-tags";
@@ -203,8 +186,9 @@ function createImageCard(item) {
 		tagsWrap.appendChild(tagButton);
 	}
 
-	card.appendChild(thumbLink);
+	card.appendChild(title);
 	card.appendChild(meta);
+	card.appendChild(player);
 	card.appendChild(tagsWrap);
 	return card;
 }
@@ -236,16 +220,16 @@ function appendGroups(payload, append = false) {
 		heading.className = "group-title";
 		heading.textContent = groupTitle(payload.groupBy, group.groupKey);
 
-		const masonry = document.createElement("div");
-		masonry.className = "masonry";
+		const list = document.createElement("div");
+		list.className = "audio-list";
 		for (const imageId of group.imageIds || []) {
 			const item = itemsById.get(imageId);
 			if (!item) continue;
-			masonry.appendChild(createImageCard(item));
+			list.appendChild(createAudioCard(item));
 		}
 
 		section.appendChild(heading);
-		section.appendChild(masonry);
+		section.appendChild(list);
 		groupContainer.appendChild(section);
 	}
 }
@@ -295,6 +279,7 @@ async function fetchUploaders() {
 }
 
 function setTagFilterOptions(items) {
+	if (!tagFilter) return;
 	const previousValue = tagFilter.value;
 	tagFilter.innerHTML = "";
 
@@ -327,7 +312,8 @@ function setTagFilterOptions(items) {
 }
 
 async function fetchTags() {
-	const response = await fetch("/api/tags/list?limit=100&mediaType=image");
+	if (!tagFilter) return;
+	const response = await fetch("/api/tags/list?limit=100&mediaType=audio");
 	const result = await response.json();
 	if (!result?.ok) {
 		throw new Error(result?.error?.message || "load tags failed");
@@ -347,9 +333,9 @@ async function fetchList({ append = false } = {}) {
 		const params = new URLSearchParams();
 		params.set("limit", "20");
 		params.set("groupBy", groupBySelect.value);
-		params.set("mediaType", "image");
+		params.set("mediaType", "audio");
 		if (uploaderFilter.value) params.set("uploader", uploaderFilter.value);
-		if (tagFilter.value) params.set("tag", tagFilter.value);
+		if (tagFilter?.value) params.set("tag", tagFilter.value);
 		if (append && nextCursor) params.set("cursor", nextCursor);
 
 		const response = await fetch(`/api/list?${params.toString()}`);
@@ -369,7 +355,7 @@ async function fetchList({ append = false } = {}) {
 			setUploaderFilterOptions(fallbackUploaders);
 		}
 
-		if (!tagsLoaded && !append) {
+		if (!tagsLoaded && !append && tagFilter) {
 			const tagStats = new Map();
 			for (const item of data.items || []) {
 				for (const tag of item.tags || []) {
@@ -406,10 +392,12 @@ uploaderFilter.addEventListener("change", () => {
 	fetchList({ append: false });
 });
 
-tagFilter.addEventListener("change", () => {
-	nextCursor = null;
-	fetchList({ append: false });
-});
+if (tagFilter) {
+	tagFilter.addEventListener("change", () => {
+		nextCursor = null;
+		fetchList({ append: false });
+	});
+}
 
 loadMoreButton.addEventListener("click", () => {
 	if (!nextCursor) return;
@@ -441,7 +429,7 @@ groupContainer.addEventListener("click", (event) => {
 	const target = event.target;
 	if (!(target instanceof HTMLElement)) return;
 	const tag = target.dataset.tag;
-	if (!tag) return;
+	if (!tag || !tagFilter) return;
 	tagFilter.value = tag;
 	if (tagCustomSelect) {
 		tagCustomSelect.rebuild();

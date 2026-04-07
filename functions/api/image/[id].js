@@ -14,7 +14,14 @@ export async function onRequestGet(context) {
 		}
 
 		const image = await getImageById(env.DB, imageId);
-		if (!image || image.status !== "active") {
+		const mediaType = String(image?.media_type || "image")
+			.trim()
+			.toLowerCase();
+		if (
+			!image ||
+			image.status !== "active" ||
+			(mediaType && mediaType !== "image")
+		) {
 			return jsonError(ErrorCode.ObjectNotFound, "image not found", 404);
 		}
 		const neighbors = await getImageNeighbors(env.DB, image);

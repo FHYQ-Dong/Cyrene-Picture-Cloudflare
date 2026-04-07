@@ -2,6 +2,10 @@ import { applyTheme, siteConfig } from "./site-config.js";
 
 const fileInput = document.getElementById("fileInput");
 const uploaderNicknameInput = document.getElementById("uploaderNickname");
+const tagSelect = document.getElementById("tagSelect");
+const newTagInput = document.getElementById("newTagInput");
+const addTagButton = document.getElementById("addTagButton");
+const selectedTagsElement = document.getElementById("selectedTags");
 const turnstileWidget = document.getElementById("turnstileWidget");
 const turnstileStatus = document.getElementById("turnstileStatus");
 const uploadButton = document.getElementById("uploadButton");
@@ -23,7 +27,198 @@ const STAGE_META = {
 
 const progressStore = new Map();
 const progressElementStore = new Map();
-const MAX_BATCH_ITEMS = 20;
+const MAX_BATCH_ITEMS = 50;
+const TAG_LIMIT = 10;
+let selectedTags = [];
+let tagCustomSelect = null;
+
+function closeAllCustomSelects(except = null) {
+	document.querySelectorAll(".custom-select.is-open").forEach((node) => {
+		if (except && node === except) return;
+		node.classList.remove("is-open");
+		const trigger = node.querySelector(".custom-select-trigger");
+		if (trigger) trigger.setAttribute("aria-expanded", "false");
+	});
+}
+
+function createCustomSelect(selectEl) {
+	if (!selectEl) return null;
+
+	const wrapper = document.createElement("div");
+	wrapper.className = "custom-select";
+
+	const trigger = document.createElement("button");
+	trigger.type = "button";
+	trigger.className = "custom-select-trigger";
+	trigger.setAttribute("aria-expanded", "false");
+	trigger.setAttribute("aria-haspopup", "listbox");
+
+	const list = document.createElement("div");
+	list.className = "custom-select-list";
+	list.setAttribute("role", "listbox");
+
+	function setTriggerLabel() {
+		const selected =
+			selectEl.options[selectEl.selectedIndex] || selectEl.options[0];
+		trigger.textContent = selected?.textContent || "请选择";
+	}
+
+	function choose(value, emitChange = true) {
+		if (selectEl.value !== value) {
+			selectEl.value = value;
+			if (emitChange) {
+				selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+			}
+		}
+		setTriggerLabel();
+		closeAllCustomSelects();
+	}
+
+	function renderOptions() {
+		list.innerHTML = "";
+		const selectedValue = selectEl.value;
+
+		for (const option of selectEl.options) {
+			const optionButton = document.createElement("button");
+			optionButton.type = "button";
+			optionButton.className = "custom-select-option";
+			optionButton.textContent = option.textContent;
+			optionButton.dataset.value = option.value;
+			optionButton.setAttribute("role", "option");
+			optionButton.setAttribute(
+				"aria-selected",
+				option.value === selectedValue ? "true" : "false"
+			);
+			if (option.value === selectedValue) {
+				optionButton.classList.add("is-selected");
+			}
+			optionButton.addEventListener("click", () => {
+				choose(option.value, true);
+				renderOptions();
+			});
+			list.appendChild(optionButton);
+		}
+		setTriggerLabel();
+	}
+
+	trigger.addEventListener("click", () => {
+		const isOpen = wrapper.classList.contains("is-open");
+		if (isOpen) {
+			closeAllCustomSelects();
+			return;
+		}
+		closeAllCustomSelects(wrapper);
+		wrapper.classList.add("is-open");
+		trigger.setAttribute("aria-expanded", "true");
+	});
+
+	selectEl.addEventListener("change", () => {
+		renderOptions();
+	});
+
+	selectEl.classList.add("native-select-hidden");
+	selectEl.insertAdjacentElement("afterend", wrapper);
+	wrapper.appendChild(trigger);
+	wrapper.appendChild(list);
+	renderOptions();
+
+	return {
+		rebuild: renderOptions,
+		setValue: (value) => choose(value, false),
+	};
+}
+
+function normalizeTag(tag) {
+	return String(tag || "")
+		.trim()
+		.toLowerCase()
+		.replace(/\s+/g, " ")
+		.slice(0, 30);
+}
+
+function removeTag(tag) {
+	selectedTags = selectedTags.filter((item) => item !== tag);
+	renderSelectedTags();
+}
+
+function renderSelectedTags() {
+	if (!selectedTagsElement) return;
+	selectedTagsElement.innerHTML = "";
+	for (const tag of selectedTags) {
+		const chip = document.createElement("button");
+		chip.type = "button";
+		chip.className = "selected-tag-chip";
+		chip.textContent = `#${tag}`;
+		chip.addEventListener("click", () => removeTag(tag));
+		selectedTagsElement.appendChild(chip);
+	}
+}
+
+function addTag(tag) {
+	const normalizedTag = normalizeTag(tag);
+	if (!normalizedTag) return;
+	if (selectedTags.includes(normalizedTag)) return;
+	if (selectedTags.length >= TAG_LIMIT) return;
+	selectedTags.push(normalizedTag);
+	renderSelectedTags();
+}
+
+async function loadTags() {
+	if (!tagSelect) return;
+	const response = await fetch("/api/tags/list?limit=100&mediaType=image", {
+		method: "GET",
+		headers: { accept: "application/json" },
+	});
+	const payload = await response.json().catch(() => null);
+	if (!response.ok || !payload?.ok) return;
+
+	const currentValue = tagSelect.value;
+	tagSelect.innerHTML = "";
+	const defaultOption = document.createElement("option");
+	defaultOption.value = "";
+	defaultOption.textContent = "从已有标签中选择";
+	tagSelect.appendChild(defaultOption);
+
+	for (const item of payload.data?.items || []) {
+		const tag = normalizeTag(item.tag);
+		if (!tag) continue;
+		const option = document.createElement("option");
+		option.value = tag;
+		option.textContent = `#${tag} (${Number(item.count || 0)})`;
+		tagSelect.appendChild(option);
+	}
+
+	tagSelect.value = currentValue || "";
+	if (tagCustomSelect) {
+		tagCustomSelect.rebuild();
+	}
+}
+
+function bindTagSelectorEvents() {
+	if (tagSelect) {
+		tagSelect.addEventListener("change", () => {
+			if (!tagSelect.value) return;
+			addTag(tagSelect.value);
+			tagSelect.value = "";
+		});
+	}
+
+	if (addTagButton) {
+		addTagButton.addEventListener("click", () => {
+			addTag(newTagInput?.value || "");
+			if (newTagInput) newTagInput.value = "";
+		});
+	}
+
+	if (newTagInput) {
+		newTagInput.addEventListener("keydown", (event) => {
+			if (event.key !== "Enter") return;
+			event.preventDefault();
+			addTag(newTagInput.value);
+			newTagInput.value = "";
+		});
+	}
+}
 
 function setSummary(text, state = "pending") {
 	uploadSummary.textContent = text;
@@ -41,6 +236,12 @@ function stageToLabel(stage) {
 
 function stageToPercent(stage) {
 	return STAGE_META[stage]?.percent ?? 0;
+}
+
+function formatStageDuration(ms) {
+	const normalized = Number(ms || 0);
+	if (!Number.isFinite(normalized) || normalized <= 0) return "0.0s";
+	return `${(normalized / 1000).toFixed(1)}s`;
 }
 
 function clearProgressItems() {
@@ -340,7 +541,7 @@ async function checkUploadHashes(items) {
 			})),
 		}),
 	});
-	return response.json();
+	return parseJsonResponse(response, "哈希预检");
 }
 
 async function prepareBatchUpload(batchId, items, turnstileToken) {
@@ -359,7 +560,7 @@ async function prepareBatchUpload(batchId, items, turnstileToken) {
 			})),
 		}),
 	});
-	return response.json();
+	return parseJsonResponse(response, "申请上传");
 }
 
 async function createBatchUploadSession(batchId, token) {
@@ -371,7 +572,7 @@ async function createBatchUploadSession(batchId, token) {
 			turnstileToken: token,
 		}),
 	});
-	return response.json();
+	return parseJsonResponse(response, "创建批次会话");
 }
 
 function formatSessionErrorMessage(sessionPayload) {
@@ -439,7 +640,29 @@ async function completeBatchUpload(batchId, items) {
 			items,
 		}),
 	});
-	return response.json();
+	return parseJsonResponse(response, "写入元数据");
+}
+
+async function parseJsonResponse(response, label) {
+	const contentType = String(response.headers.get("content-type") || "")
+		.toLowerCase()
+		.trim();
+	if (contentType.includes("application/json")) {
+		return response.json();
+	}
+
+	const rawText = await response.text().catch(() => "");
+	const compactText = String(rawText || "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 120);
+	const status = Number(response.status || 0);
+	const message = compactText
+		? `${label}返回非JSON（${status} ${
+				contentType || "unknown"
+		  }）：${compactText}`
+		: `${label}返回非JSON（${status} ${contentType || "unknown"}）`;
+	throw new Error(message);
 }
 
 async function computeFileHash(file) {
@@ -530,8 +753,10 @@ async function processUploadChunk(params) {
 		chunkCount,
 		hashResultMap,
 		uploaderNickname,
+		tags,
 		batchId,
 		batchSessionToken,
+		perfMetrics,
 	} = params;
 
 	const hitItems = [];
@@ -562,11 +787,18 @@ async function processUploadChunk(params) {
 	let rejectedByPrepare = [];
 	let rotatedBatchSessionToken = batchSessionToken;
 	if (missItems.length) {
+		const prepareStartedAt = performance.now();
 		const preparePayload = await prepareBatchUpload(
 			batchId,
 			missItems,
 			batchSessionToken
 		);
+		if (perfMetrics) {
+			perfMetrics.prepareClientMs += performance.now() - prepareStartedAt;
+			perfMetrics.prepareServerMs += Number(
+				preparePayload?.data?.perf?.serverMs || 0
+			);
+		}
 		if (!preparePayload.ok) {
 			const errorCode = String(preparePayload?.error?.code || "");
 			const retryableSessionError =
@@ -667,6 +899,7 @@ async function processUploadChunk(params) {
 			height: item.height,
 			uploaderNickname,
 			originalFilename: item.file.name,
+			tags,
 		});
 		upsertProgress(item.clientFileId, {
 			stage: "finalizing",
@@ -689,6 +922,7 @@ async function processUploadChunk(params) {
 			etag: result.etag,
 			uploaderNickname,
 			originalFilename: result.item.file.name,
+			tags,
 		});
 	}
 
@@ -699,7 +933,11 @@ async function processUploadChunk(params) {
 		};
 	}
 
+	const completeStartedAt = performance.now();
 	const completePayload = await completeBatchUpload(batchId, completeItems);
+	if (perfMetrics) {
+		perfMetrics.completeClientMs += performance.now() - completeStartedAt;
+	}
 	if (!completePayload.ok) {
 		for (const item of completeItems) {
 			upsertProgress(item.clientFileId, {
@@ -755,8 +993,15 @@ uploadButton.addEventListener("click", async () => {
 	try {
 		setUploading(true);
 		activeBatchSession = null;
+		const perfMetrics = {
+			hashMs: 0,
+			prepareClientMs: 0,
+			prepareServerMs: 0,
+			completeClientMs: 0,
+		};
 		const batchId = crypto.randomUUID();
 		const uploaderNickname = getNicknameValue();
+		const tags = [...selectedTags];
 		setSummary(`开始处理 ${files.length} 个文件...`, "pending");
 
 		const batchItems = [];
@@ -773,6 +1018,7 @@ uploadButton.addEventListener("click", async () => {
 
 		initProgressItems(batchItems);
 
+		const hashStartedAt = performance.now();
 		for (let index = 0; index < batchItems.length; index += 1) {
 			const current = batchItems[index];
 			upsertProgress(current.clientFileId, {
@@ -784,6 +1030,7 @@ uploadButton.addEventListener("click", async () => {
 			current.width = dimensions.width;
 			current.height = dimensions.height;
 		}
+		perfMetrics.hashMs = performance.now() - hashStartedAt;
 
 		setSummary("执行哈希预检...", "pending");
 		const hashCheckPayload = await checkUploadHashes(batchItems);
@@ -825,8 +1072,10 @@ uploadButton.addEventListener("click", async () => {
 				chunkCount: chunks.length,
 				hashResultMap,
 				uploaderNickname,
+				tags,
 				batchId,
 				batchSessionToken,
+				perfMetrics,
 			});
 
 			if (chunkResult?.retryableSessionError) {
@@ -840,8 +1089,10 @@ uploadButton.addEventListener("click", async () => {
 					chunkCount: chunks.length,
 					hashResultMap,
 					uploaderNickname,
+					tags,
 					batchId,
 					batchSessionToken,
+					perfMetrics,
 				});
 			}
 
@@ -856,8 +1107,15 @@ uploadButton.addEventListener("click", async () => {
 
 		forceSetPendingToFailed("批次异常收敛：未完成项已标记失败");
 		const summary = summarizeProgress();
+		const stageCostText = `（耗时：哈希 ${formatStageDuration(
+			perfMetrics.hashMs
+		)} / 申请 ${formatStageDuration(
+			perfMetrics.prepareClientMs
+		)}（服务端 ${formatStageDuration(
+			perfMetrics.prepareServerMs
+		)}） / 写入 ${formatStageDuration(perfMetrics.completeClientMs)}）`;
 		setSummary(
-			`上传完成：成功 ${summary.successCount}，失败 ${summary.failedCount}`,
+			`上传完成：成功 ${summary.successCount}，失败 ${summary.failedCount}${stageCostText}`,
 			summary.failedCount > 0 ? "error" : "success"
 		);
 
@@ -879,7 +1137,19 @@ applyTheme();
 
 async function bootstrap() {
 	await loadClientConfig();
+	bindTagSelectorEvents();
+	tagCustomSelect = createCustomSelect(tagSelect);
+	await loadTags();
+	renderSelectedTags();
 	await setupTurnstile();
 }
 
 bootstrap();
+
+document.addEventListener("click", (event) => {
+	const target = event.target;
+	if (!(target instanceof Element)) return;
+	if (!target.closest(".custom-select")) {
+		closeAllCustomSelects();
+	}
+});
