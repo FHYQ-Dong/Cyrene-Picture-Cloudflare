@@ -30,6 +30,7 @@ class MockD1 {
 		this.imageObjectsById = new Map();
 		this.uploadEventsById = new Map();
 		this.imagesById = new Map();
+		this.botCandidatesById = new Map();
 		this.rateMinute = new Map();
 		this.quotaDaily = new Map();
 	}
@@ -84,6 +85,49 @@ class MockD1 {
 		this.imagesById.set(imageId, normalized);
 	}
 
+	addBotCandidate(candidate) {
+		const candidateId = String(
+			candidate.candidate_id ||
+				candidate.candidateId ||
+				crypto.randomUUID()
+		);
+		const normalized = {
+			candidate_id: candidateId,
+			group_id: String(candidate.group_id || candidate.groupId || ""),
+			message_id: String(
+				candidate.message_id || candidate.messageId || ""
+			),
+			sender_id: String(candidate.sender_id || candidate.senderId || ""),
+			image_url: String(candidate.image_url || candidate.imageUrl || ""),
+			content_hash: String(
+				candidate.content_hash || candidate.contentHash || ""
+			),
+			quality_score:
+				candidate.quality_score ?? candidate.qualityScore ?? null,
+			default_tags_json:
+				typeof candidate.default_tags_json === "string"
+					? candidate.default_tags_json
+					: JSON.stringify(candidate.default_tags || []),
+			manual_tags_json:
+				typeof candidate.manual_tags_json === "string"
+					? candidate.manual_tags_json
+					: JSON.stringify(candidate.manual_tags || []),
+			final_tags_json:
+				typeof candidate.final_tags_json === "string"
+					? candidate.final_tags_json
+					: JSON.stringify(candidate.final_tags || []),
+			meta_json:
+				typeof candidate.meta_json === "string"
+					? candidate.meta_json
+					: JSON.stringify(candidate.meta || {}),
+			status: String(candidate.status || "pending"),
+			reason: String(candidate.reason || ""),
+			created_at: candidate.created_at || new Date().toISOString(),
+			reviewed_at: candidate.reviewed_at || null,
+		};
+		this.botCandidatesById.set(candidateId, normalized);
+	}
+
 	async first(sql, args) {
 		if (sql.includes("SELECT request_count FROM rate_limits_minute")) {
 			const mapKey = this.key(args);
@@ -113,6 +157,13 @@ class MockD1 {
 			sql.includes("object_id = ?1")
 		) {
 			return this.imageObjectsById.get(args[0]) || null;
+		}
+
+		if (
+			sql.includes("FROM bot_ingest_candidates") &&
+			sql.includes("WHERE candidate_id = ?1")
+		) {
+			return this.botCandidatesById.get(String(args[0] || "")) || null;
 		}
 
 		if (
@@ -170,6 +221,44 @@ class MockD1 {
 	}
 
 	async all(sql, args) {
+		if (
+			sql.includes("FROM bot_ingest_candidates") &&
+			sql.includes("ORDER BY created_at DESC")
+		) {
+			let index = 0;
+			let status = "";
+			let groupId = "";
+			let cursor = "";
+
+			if (sql.includes("status = ?")) {
+				status = String(args[index++] || "")
+					.trim()
+					.toLowerCase();
+			}
+			if (sql.includes("group_id = ?")) {
+				groupId = String(args[index++] || "").trim();
+			}
+			if (sql.includes("created_at < ?")) {
+				cursor = String(args[index++] || "").trim();
+			}
+			const limit = Number(args[index] || 50);
+
+			const rows = Array.from(this.botCandidatesById.values())
+				.filter((item) => {
+					if (status && item.status !== status) return false;
+					if (groupId && item.group_id !== groupId) return false;
+					if (cursor && String(item.created_at) >= String(cursor)) {
+						return false;
+					}
+					return true;
+				})
+				.sort((a, b) =>
+					String(b.created_at).localeCompare(a.created_at)
+				);
+
+			return rows.slice(0, limit);
+		}
+
 		if (
 			sql.includes("FROM images") &&
 			sql.includes("ORDER BY created_at DESC")
@@ -266,6 +355,70 @@ class MockD1 {
 				upload_bytes: current.upload_bytes + Number(args[4] || 0),
 			});
 			return { success: true };
+		}
+
+		if (sql.includes("INSERT INTO bot_ingest_candidates")) {
+			const [
+				candidateId,
+				groupId,
+				messageId,
+				senderId,
+				imageUrl,
+				contentHash,
+				qualityScore,
+				defaultTagsJson,
+				manualTagsJson,
+				finalTagsJson,
+				metaJson,
+				status,
+				reason,
+				createdAt,
+				reviewedAt,
+			] = args;
+			this.addBotCandidate({
+				candidate_id: candidateId,
+				group_id: groupId,
+				message_id: messageId,
+				sender_id: senderId,
+				image_url: imageUrl,
+				content_hash: contentHash,
+				quality_score: qualityScore,
+				default_tags_json: defaultTagsJson,
+				manual_tags_json: manualTagsJson,
+				final_tags_json: finalTagsJson,
+				meta_json: metaJson,
+				status,
+				reason,
+				created_at: createdAt,
+				reviewed_at: reviewedAt,
+			});
+			return { success: true, meta: { changes: 1 } };
+		}
+
+		if (sql.includes("UPDATE bot_ingest_candidates")) {
+			const [
+				candidateId,
+				status,
+				reason,
+				manualTagsJson,
+				finalTagsJson,
+				metaJson,
+				reviewedAt,
+			] = args;
+			const row = this.botCandidatesById.get(String(candidateId || ""));
+			if (!row) {
+				return { success: true, meta: { changes: 0 } };
+			}
+			row.status = String(status || row.status);
+			row.reason = String(reason || "");
+			row.manual_tags_json = String(manualTagsJson || "[]");
+			row.final_tags_json = String(finalTagsJson || "[]");
+			if (metaJson != null) {
+				row.meta_json = String(metaJson);
+			}
+			row.reviewed_at = reviewedAt || row.reviewed_at;
+			this.botCandidatesById.set(String(candidateId || ""), row);
+			return { success: true, meta: { changes: 1 } };
 		}
 
 		if (sql.includes("INSERT INTO image_objects")) {

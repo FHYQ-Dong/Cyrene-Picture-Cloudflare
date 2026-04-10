@@ -12,6 +12,7 @@ npm run db:migrate:v2:local
 npm run db:migrate:v3:local
 npm run db:migrate:v5:local
 npm run db:migrate:v13:local
+npm run db:migrate:v17:local
 ```
 
 如果第二条出现 `duplicate column name: uploader_nickname`，表示 v2 迁移已经执行过，可直接继续下一步。
@@ -56,6 +57,7 @@ wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v2-uploader-nic
 wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v3-thumbnails.sql
 wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v5-hash-dedup.sql
 wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v13-audio-media-support.sql
+wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v17-bot-ingest.sql
 ```
 
 7. 若启用 Turnstile 正式 key，请配置环境变量：
@@ -73,6 +75,16 @@ wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v13-audio-media
 -   上传者昵称（可选，默认 `093`）
 -   图片列表与详情
 -   结构化日志与基础错误码
+
+## 最新改动（v17 QQ Bot 收图）
+
+-   新增后端接口：`POST /api/bot/ingest-images`（Bot Token 鉴权）。
+-   新增 Bot 变量：`BOT_INGEST_TOKEN`、`BOT_INGEST_ALLOWED_GROUPS`、`BOT_INGEST_RATE_LIMIT_PER_MIN`。
+-   新增迁移：`infra/d1/migrate-v17-bot-ingest.sql`（`bot_ingest_logs` + `bot_ingest_candidates`）。
+-   v17 接入层调整为：`Docker + mirai`，由容器内插件直接调用主站 ingest API。
+-   不再使用 `mirai-api-http + HTTP bridge` 独立桥接层。
+
+> v17 主路径请参考：`plan/v1-r2-pages/code-plan-v17-qq-bot-group-image-ingestion.md`
 
 ## 最新改动（v13 音频支持）
 

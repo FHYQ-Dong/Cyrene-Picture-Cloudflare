@@ -1,0 +1,11 @@
+{
+  "name": "cyrene-qq-bot-mirai-docker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:plugin": "gradle buildPlugin",
+    "build:payload": "node ./tools/payload-builder.js",
+    "test": "node --test ./tests/**/*.test.js"
+  }
+}

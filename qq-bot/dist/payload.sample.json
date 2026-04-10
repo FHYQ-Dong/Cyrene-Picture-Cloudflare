@@ -1,0 +1,23 @@
+{
+  "source": "mirai-docker",
+  "groupId": "123456",
+  "messageId": "mirai-1775805939162",
+  "senderId": "10001",
+  "senderName": "mirai-user",
+  "reviewMode": "pending",
+  "tags": [
+    "昔涟美图",
+    "qq投稿"
+  ],
+  "images": [
+    {
+      "clientFileId": "img-0",
+      "imageUrl": "https://example.com/image-1.jpg",
+      "fileName": "image-1.jpg",
+      "mime": "image/jpeg",
+      "tags": [
+        "投稿"
+      ]
+    }
+  ]
+}

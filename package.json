@@ -22,7 +22,11 @@
     "db:migrate:v15:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/migrate-v15-tag-system.sql",
     "db:migrate:v15:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v15-tag-system.sql",
     "db:migrate:v15:media-isolation:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/migrate-v15-tag-media-isolation.sql",
-    "db:migrate:v15:media-isolation:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v15-tag-media-isolation.sql"
+    "db:migrate:v15:media-isolation:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v15-tag-media-isolation.sql",
+    "db:migrate:v17:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/migrate-v17-bot-ingest.sql",
+    "db:migrate:v17:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v17-bot-ingest.sql",
+    "db:migrate:v17:candidate-meta:local": "wrangler d1 execute cyrene_meta --local --file=infra/d1/migrate-v17-bot-candidate-meta.sql",
+    "db:migrate:v17:candidate-meta:remote": "wrangler d1 execute cyrene_meta --remote --file=infra/d1/migrate-v17-bot-candidate-meta.sql"
   },
   "devDependencies": {
     "wrangler": "^4.11.1"

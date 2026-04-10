@@ -891,6 +891,252 @@ export async function consumeUploadTokenRecord(db, payload) {
 	return Number(result?.meta?.changes || 0) > 0;
 }
 
+export async function insertBotIngestLog(db, payload) {
+	const timestamp = nowIso();
+	await db
+		.prepare(
+			`INSERT INTO bot_ingest_logs (
+			 ingest_id,
+			 source,
+			 group_id,
+			 message_id,
+			 sender_id,
+			 sender_name,
+			 image_count,
+			 success_count,
+			 failed_count,
+			 status,
+			 error_json,
+			 created_at
+		 )
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
+		)
+		.bind(
+			payload.ingestId || crypto.randomUUID(),
+			String(payload.source || "qq-bot"),
+			String(payload.groupId || ""),
+			String(payload.messageId || ""),
+			String(payload.senderId || ""),
+			String(payload.senderName || ""),
+			Number(payload.imageCount || 0),
+			Number(payload.successCount || 0),
+			Number(payload.failedCount || 0),
+			String(payload.status || "success"),
+			payload.errorJson ? JSON.stringify(payload.errorJson) : null,
+			timestamp
+		)
+		.run()
+		.catch(() => null);
+}
+
+export async function insertBotCandidate(db, payload) {
+	const timestamp = nowIso();
+	await db
+		.prepare(
+			`INSERT INTO bot_ingest_candidates (
+			 candidate_id,
+			 group_id,
+			 message_id,
+			 sender_id,
+			 image_url,
+			 content_hash,
+			 quality_score,
+			 default_tags_json,
+			 manual_tags_json,
+			 final_tags_json,
+			 meta_json,
+			 status,
+			 reason,
+			 created_at,
+			 reviewed_at
+		 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`
+		)
+		.bind(
+			payload.candidateId || crypto.randomUUID(),
+			String(payload.groupId || ""),
+			String(payload.messageId || ""),
+			String(payload.senderId || ""),
+			String(payload.imageUrl || ""),
+			String(payload.contentHash || ""),
+			payload.qualityScore ?? null,
+			JSON.stringify(payload.defaultTags || []),
+			JSON.stringify(payload.manualTags || []),
+			JSON.stringify(payload.finalTags || []),
+			JSON.stringify(payload.meta || {}),
+			String(payload.status || "approved"),
+			String(payload.reason || ""),
+			timestamp,
+			payload.reviewedAt || null
+		)
+		.run()
+		.catch(() => null);
+}
+
+function parseJsonArray(rawValue) {
+	if (rawValue == null || rawValue === "") return [];
+	try {
+		const parsed = JSON.parse(rawValue);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return [];
+	}
+}
+
+function parseJsonObject(rawValue) {
+	if (rawValue == null || rawValue === "") return {};
+	try {
+		const parsed = JSON.parse(rawValue);
+		return parsed && typeof parsed === "object" ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+function hydrateBotCandidate(row) {
+	if (!row) return null;
+	return {
+		...row,
+		default_tags: parseJsonArray(row.default_tags_json),
+		manual_tags: parseJsonArray(row.manual_tags_json),
+		final_tags: parseJsonArray(row.final_tags_json),
+		meta: parseJsonObject(row.meta_json),
+	};
+}
+
+export async function getBotCandidateById(db, candidateId) {
+	const row = await db
+		.prepare(
+			`SELECT
+			 candidate_id,
+			 group_id,
+			 message_id,
+			 sender_id,
+			 image_url,
+			 content_hash,
+			 quality_score,
+			 default_tags_json,
+			 manual_tags_json,
+			 final_tags_json,
+			 meta_json,
+			 status,
+			 reason,
+			 created_at,
+			 reviewed_at
+		 FROM bot_ingest_candidates
+		 WHERE candidate_id = ?1
+		 LIMIT 1`
+		)
+		.bind(String(candidateId || ""))
+		.first()
+		.catch(() => null);
+
+	return hydrateBotCandidate(row);
+}
+
+export async function listBotCandidates(
+	db,
+	{ status = "pending", groupId = "", limit = 50, cursorCreatedAt = "" } = {}
+) {
+	const safeLimit = Math.min(Math.max(Number(limit || 50), 1), 200);
+	const normalizedStatus = String(status || "")
+		.trim()
+		.toLowerCase();
+	const normalizedGroupId = String(groupId || "").trim();
+	const normalizedCursor = String(cursorCreatedAt || "").trim();
+
+	const where = ["1=1"];
+	const binds = [];
+
+	if (normalizedStatus && normalizedStatus !== "all") {
+		where.push(`status = ?${binds.length + 1}`);
+		binds.push(normalizedStatus);
+	}
+
+	if (normalizedGroupId) {
+		where.push(`group_id = ?${binds.length + 1}`);
+		binds.push(normalizedGroupId);
+	}
+
+	if (normalizedCursor) {
+		where.push(`created_at < ?${binds.length + 1}`);
+		binds.push(normalizedCursor);
+	}
+
+	const sql = `SELECT
+		candidate_id,
+		group_id,
+		message_id,
+		sender_id,
+		image_url,
+		content_hash,
+		quality_score,
+		default_tags_json,
+		manual_tags_json,
+		final_tags_json,
+		meta_json,
+		status,
+		reason,
+		created_at,
+		reviewed_at
+	 FROM bot_ingest_candidates
+	 WHERE ${where.join(" AND ")}
+	 ORDER BY created_at DESC
+	 LIMIT ?${binds.length + 1}`;
+
+	const rows = await db
+		.prepare(sql)
+		.bind(...binds, safeLimit)
+		.all()
+		.catch(() => ({ results: [] }));
+
+	return (rows?.results || []).map(hydrateBotCandidate);
+}
+
+export async function reviewBotCandidate(
+	db,
+	{
+		candidateId,
+		status,
+		reason = "",
+		manualTags = [],
+		finalTags = [],
+		meta = null,
+	}
+) {
+	const reviewedAt = nowIso();
+	const normalizedStatus = String(status || "")
+		.trim()
+		.toLowerCase();
+	const normalizedReason = String(reason || "")
+		.trim()
+		.slice(0, 200);
+
+	const result = await db
+		.prepare(
+			`UPDATE bot_ingest_candidates
+		 SET status = ?2,
+		 	reason = ?3,
+		 	manual_tags_json = ?4,
+		 	final_tags_json = ?5,
+		 	meta_json = CASE WHEN ?6 IS NULL THEN meta_json ELSE ?6 END,
+		 	reviewed_at = ?7
+		 WHERE candidate_id = ?1`
+		)
+		.bind(
+			String(candidateId || ""),
+			normalizedStatus,
+			normalizedReason,
+			JSON.stringify(manualTags || []),
+			JSON.stringify(finalTags || []),
+			meta ? JSON.stringify(meta) : null,
+			reviewedAt
+		)
+		.run()
+		.catch(() => ({ meta: { changes: 0 } }));
+
+	return Number(result?.meta?.changes || 0) > 0;
+}
+
 export async function writeAdminActionLog(db, payload) {
 	const timestamp = nowIso();
 	await db

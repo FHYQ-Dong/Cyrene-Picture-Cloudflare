@@ -1,0 +1,26 @@
+plugin:
+    name: cyrene-mirai-ingest
+    source: mirai-docker
+
+cyrene:
+    apiBaseUrl: https://your-domain.example.com
+    ingestPath: /api/bot/ingest-images
+    botIngestToken: replace-with-strong-token
+    reviewMode: pending
+    defaultTags:
+        - 昔涟美图
+        - qq投稿
+
+filters:
+    allowedGroups:
+        - "123456"
+        - "654321"
+    triggerWords:
+        - 投稿
+        - cyrene
+        - "#昔涟美图"
+
+request:
+    timeoutMs: 20000
+    retryCount: 3
+    retryBackoffMs: 800

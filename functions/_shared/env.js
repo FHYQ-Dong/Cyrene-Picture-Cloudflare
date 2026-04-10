@@ -5,6 +5,13 @@ export function readNumber(env, key, fallback) {
 	return Number.isFinite(value) ? value : fallback;
 }
 
+function parseCsvList(rawValue) {
+	return String(rawValue || "")
+		.split(",")
+		.map((item) => item.trim())
+		.filter(Boolean);
+}
+
 export function getConfig(env) {
 	return {
 		maxFileSize: readNumber(env, "MAX_FILE_SIZE", 209715200),
@@ -66,6 +73,15 @@ export function getConfig(env) {
 		),
 		adminDeleteAllowDryRun:
 			(env.ADMIN_DELETE_ALLOW_DRY_RUN || "true") === "true",
+		botIngestToken: String(env.BOT_INGEST_TOKEN || "").trim(),
+		botIngestAllowedGroups: new Set(
+			parseCsvList(env.BOT_INGEST_ALLOWED_GROUPS || "")
+		),
+		botIngestRateLimitPerMin: readNumber(
+			env,
+			"BOT_INGEST_RATE_LIMIT_PER_MIN",
+			120
+		),
 		allowedMime: new Set([
 			"image/jpeg",
 			"image/png",

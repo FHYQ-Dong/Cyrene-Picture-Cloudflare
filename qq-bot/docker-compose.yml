@@ -1,0 +1,19 @@
+services:
+  mirai:
+    image: ${MIRAI_IMAGE:-ghcr.io/overflow65537/mirai-console:latest}
+    container_name: ${MIRAI_CONTAINER_NAME:-cyrene-mirai}
+    restart: unless-stopped
+    environment:
+      CYRENE_API_BASE_URL: ${CYRENE_API_BASE_URL}
+      CYRENE_BOT_INGEST_TOKEN: ${CYRENE_BOT_INGEST_TOKEN}
+      CYRENE_ALLOWED_GROUPS: ${CYRENE_ALLOWED_GROUPS:-}
+      CYRENE_TRIGGER_WORDS: ${CYRENE_TRIGGER_WORDS:-投稿,cyrene,#昔涟美图}
+      CYRENE_REVIEW_MODE: ${CYRENE_REVIEW_MODE:-pending}
+      CYRENE_DEFAULT_TAGS: ${CYRENE_DEFAULT_TAGS:-昔涟美图,qq投稿}
+    volumes:
+      - ./mirai/config:/app/config
+      - ./mirai/plugins:/app/plugins
+      - ./mirai/data:/app/data
+      - ./config/plugin-config.yml:/app/config/cyrene-plugin-config.yml:ro
+    ports:
+      - "${MIRAI_HOST_PORT:-8080}:8080"
